@@ -8,4 +8,7 @@ build/
 dist/
 *.egg-info/
 target/
-benchmarks/results/
+# Ignore stale/intermediate benchmark artifacts but keep the final raw JSON
+# trackable so the director can preserve serialized performance evidence.
+benchmarks/results/*
+!benchmarks/results/latest.json

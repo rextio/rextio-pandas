@@ -39,6 +39,18 @@ CORE_ROOT = Path("/Volumes/Data/workspace/rextio/rextio-core-next")
 CORE_SHA = "ac2b79d304f13abaaecaf7714f897574c3b6256f"
 
 
+# Eligibility is fail-closed. A headline cell must clear every one of these
+# gates; anything unproven leaves the cell out of the headline set.
+_NEAR_FLOOR_MULTIPLE = 5.0
+_MAX_CI_WIDTH_FRACTION = 0.25
+
+
+def _require(condition: object, message: str) -> None:
+    """Fail-closed runtime gate that survives ``python -O`` (no ``assert``)."""
+    if not condition:
+        raise RuntimeError(f"benchmark preflight failed: {message}")
+
+
 def _git_sha(path: Path) -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -49,9 +61,109 @@ def _git_sha(path: Path) -> str:
     ).stdout.strip()
 
 
+def _git_dirty(path: Path) -> bool:
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return bool(status.strip())
+
+
 def _command_text(command: Sequence[str]) -> str:
     completed = subprocess.run(command, capture_output=True, text=True, check=True)
     return completed.stdout.strip() or completed.stderr.strip()
+
+
+def _sha256_files(paths: Sequence[Path]) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(paths):
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _counterbalanced_schedule(repetitions: int, rng: random.Random) -> list[list[str]]:
+    """Return a genuinely counterbalanced native/fallback order schedule.
+
+    The native-first and fallback-first counts are forced to differ by at most
+    one (e.g. 5:4 or 4:5 for nine repeats) instead of being drawn independently
+    per repeat, then the balanced orders are seeded-shuffled so ordering bias
+    cannot correlate with lane.
+    """
+    native_first = (repetitions + 1) // 2
+    orders = [["native", "fallback"] for _ in range(native_first)]
+    orders += [["fallback", "native"] for _ in range(repetitions - native_first)]
+    rng.shuffle(orders)
+    return orders
+
+
+def _schedule_balance(schedule: Sequence[Sequence[str]]) -> dict[str, Any]:
+    native_first = sum(1 for order in schedule if order[0] == "native")
+    fallback_first = sum(1 for order in schedule if order[0] == "fallback")
+    return {
+        "native_first": native_first,
+        "fallback_first": fallback_first,
+        "is_counterbalanced": (
+            len(schedule) > 0
+            and native_first + fallback_first == len(schedule)
+            and abs(native_first - fallback_first) <= 1
+        ),
+    }
+
+
+def _headline_eligibility(
+    cell: dict[str, Any],
+    *,
+    repetitions: int,
+    null_floor_median_ns: float,
+) -> tuple[bool, list[str]]:
+    """Fail-closed headline gate; returns ``(eligible, blocking_reasons)``."""
+    reasons: list[str] = []
+    product = cell["product"]
+
+    if cell["route"] != "series.map":
+        # Per the WP contract, DataFrame speedups stay out of headlines until
+        # mixed-row coercion and NumPy-scalar semantics are resolved.
+        reasons.append("route-not-headline-surface")
+    if not cell.get("route_verified", False):
+        reasons.append("route-or-provenance-unverified")
+
+    digest = product.get("correctness_digest", {})
+    if digest.get("native") != digest.get("fallback") or not digest.get("native"):
+        reasons.append("correctness-mismatch")
+
+    samples = product.get("samples_ns_per_call", {})
+    native = samples.get("native", [])
+    fallback = samples.get("fallback", [])
+    if len(native) != repetitions or len(fallback) != repetitions:
+        reasons.append("missing-required-sample")
+    if any(value <= 0.0 for value in [*native, *fallback]):
+        reasons.append("nonpositive-sample")
+
+    balance = product.get("schedule_balance", {})
+    if not balance.get("is_counterbalanced", False):
+        reasons.append("schedule-not-counterbalanced")
+
+    medians = product.get("median_ns_per_call", {})
+    floor = null_floor_median_ns * _NEAR_FLOOR_MULTIPLE
+    if any(medians.get(lane, 0.0) < floor for lane in ("native", "fallback")):
+        reasons.append("near-null-floor")
+
+    boot = product.get("paired_bootstrap", {})
+    center = boot.get("median_native_over_fallback")
+    low = boot.get("ci95_low")
+    high = boot.get("ci95_high")
+    if center is None or low is None or high is None or center <= 0.0:
+        reasons.append("missing-bootstrap")
+    elif (high - low) > _MAX_CI_WIDTH_FRACTION * center:
+        reasons.append("unstable-wide-ci")
+
+    return (not reasons, reasons)
 
 
 def _digest(result: pd.Series) -> str:
@@ -165,13 +277,9 @@ def _product_samples(
     fallback_loops = _calibrate(fallback_call, target_ns)
 
     rng = random.Random(seed)
-    schedule: list[list[str]] = []
-    samples = {"native": [], "fallback": []}
-    for _ in range(repetitions):
-        order = ["native", "fallback"]
-        if rng.random() < 0.5:
-            order.reverse()
-        schedule.append(order.copy())
+    schedule = _counterbalanced_schedule(repetitions, rng)
+    samples: dict[str, list[float]] = {"native": [], "fallback": []}
+    for order in schedule:
         for lane in order:
             _set_mode(lane)
             if lane == "native":
@@ -181,6 +289,7 @@ def _product_samples(
     return {
         "loops": {"native": native_loops, "fallback": fallback_loops},
         "schedule": schedule,
+        "schedule_balance": _schedule_balance(schedule),
         "samples_ns_per_call": samples,
         "median_ns_per_call": {lane: statistics.median(values) for lane, values in samples.items()},
         "paired_bootstrap": _paired_bootstrap(
@@ -279,9 +388,76 @@ def _write_project(root: Path) -> None:
     (package / "kernels.py").write_text(KERNEL_SOURCE, encoding="utf-8")
 
 
+def _preflight() -> dict[str, Any]:
+    """Gather and fail-closed-validate provenance (survives ``python -O``)."""
+    import importlib.metadata as importlib_metadata
+
+    import rextio
+    import rextio_pandas
+    from rextio.plugins.api import PLUGIN_API_VERSION
+
+    _require(
+        PLUGIN_API_VERSION == "1.3",
+        f"core advertises plugin API {PLUGIN_API_VERSION!r}, need '1.3'",
+    )
+
+    core_file = Path(rextio.__file__).resolve()
+    plugin_file = Path(rextio_pandas.__file__).resolve()
+    _require(
+        "rextio-core-next" in core_file.parts,
+        f"imported rextio is not the integrated core-next checkout: {core_file}",
+    )
+
+    core_direct_url = importlib_metadata.distribution("rextio").read_text("direct_url.json")
+    plugin_direct_url = importlib_metadata.distribution("rextio-pandas").read_text(
+        "direct_url.json"
+    )
+
+    entry_points = [
+        {"name": ep.name, "value": ep.value, "dist": ep.dist.name if ep.dist else None}
+        for ep in importlib_metadata.entry_points(group="rextio.plugins")
+        if ep.name == "rextio-pandas"
+    ]
+    _require(
+        any(
+            ep["value"] == "rextio_pandas.plugin:plugin" and ep["dist"] == "rextio-pandas"
+            for ep in entry_points
+        ),
+        f"rextio-pandas entry point is not provided by this checkout: {entry_points}",
+    )
+
+    _require(
+        _git_sha(CORE_ROOT) == CORE_SHA,
+        "core-next is not at the required integrated commit",
+    )
+
+    return {
+        "core_sha": _git_sha(CORE_ROOT),
+        "core_dirty": _git_dirty(CORE_ROOT),
+        "plugin_sha": _git_sha(ROOT),
+        "plugin_dirty": _git_dirty(ROOT),
+        "core_import_file": str(core_file),
+        "plugin_import_file": str(plugin_file),
+        "core_direct_url": core_direct_url,
+        "plugin_direct_url": plugin_direct_url,
+        "plugin_api_version": PLUGIN_API_VERSION,
+        "selected_entry_points": entry_points,
+        "harness_digest": _sha256_files(
+            [Path(__file__).resolve(), ROOT / "benchmarks" / "cases.py"]
+        ),
+        "pandas": pd.__version__,
+        "numpy": np.__version__,
+        "python": sys.version,
+        "rustc": _command_text(["rustc", "--version"]),
+        "cargo": _command_text(["cargo", "--version"]),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+    }
+
+
 def _bench(args: argparse.Namespace) -> dict[str, Any]:
-    if _git_sha(CORE_ROOT) != CORE_SHA:
-        raise RuntimeError("core-next is not at the required integrated commit")
+    provenance = _preflight()
     sizes = [10, 1000] if args.smoke else [1, 10, 100, 1000, 10_000, 100_000]
     repetitions = 3 if args.smoke else args.repetitions
     target_ns = int(args.target_ms * 1_000_000)
@@ -292,16 +468,27 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
         compile_started = time.perf_counter_ns()
         project = build_certification_project(project_root)
         compile_ns = time.perf_counter_ns() - compile_started
-        report = json.loads(
-            (project_root / ".rextio" / "reports" / "check.json").read_text(encoding="utf-8")
-        )
+        check_bytes = (project_root / ".rextio" / "reports" / "check.json").read_bytes()
+        report = json.loads(check_bytes.decode("utf-8"))
         routes = {
             function["qualname"]: function["route"]
             for module in report["modules"]
             for function in module["functions"]
         }
-        assert routes["bench_app.kernels.series_map"] == "native-plugin:rextio-pandas"
-        assert routes["bench_app.kernels.dataframe_apply"] == "native-plugin:rextio-pandas"
+        expected_routes = {
+            "bench_app.kernels.series_map": "native-plugin:rextio-pandas",
+            "bench_app.kernels.dataframe_apply": "native-plugin:rextio-pandas",
+        }
+        for qualname, expected_route in expected_routes.items():
+            _require(
+                routes.get(qualname) == expected_route,
+                f"{qualname} routed {routes.get(qualname)!r}, expected {expected_route!r}",
+            )
+        provenance["check_report_sha256"] = hashlib.sha256(check_bytes).hexdigest()
+        provenance["claimed_native_routes"] = {
+            qualname: routes[qualname] for qualname in expected_routes
+        }
+        provenance["compile_ns"] = compile_ns
 
         sys.path.insert(0, str(project.build_python_dir))
         try:
@@ -340,7 +527,11 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
                             "product": product,
                             "contexts": contexts,
                             "numba": numba,
-                            "headline_eligible": route == "series.map",
+                            "route_verified": routes.get(f"bench_app.kernels.{case.function_name}")
+                            == "native-plugin:rextio-pandas",
+                            # Filled in fail-closed after the null-call floor exists.
+                            "headline_eligible": False,
+                            "headline_ineligible_reasons": ["not-yet-evaluated"],
                             "headline_note": (
                                 "verified exact Series route"
                                 if route == "series.map"
@@ -360,17 +551,30 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
 
     null_loops = _calibrate(null, target_ns)
     null_samples = [_sample(null, null_loops) for _ in range(repetitions)]
+    null_floor_median_ns = statistics.median(null_samples)
+
+    for cell in cells:
+        eligible, reasons = _headline_eligibility(
+            cell,
+            repetitions=repetitions,
+            null_floor_median_ns=null_floor_median_ns,
+        )
+        cell["headline_eligible"] = eligible
+        cell["headline_ineligible_reasons"] = reasons
+
     break_even: dict[str, int | None] = {}
     for route in ("series.map", "dataframe.apply"):
         eligible = [
             cell
             for cell in cells
-            if cell["route"] == route and cell["product"]["paired_bootstrap"]["ci95_high"] < 1.0
+            if cell["route"] == route
+            and cell["headline_eligible"]
+            and cell["product"]["paired_bootstrap"]["ci95_high"] < 1.0
         ]
         break_even[route] = min((cell["size"] for cell in eligible), default=None)
 
     return {
-        "schema": 1,
+        "schema": 2,
         "smoke": args.smoke,
         "generated_at_unix_ns": time.time_ns(),
         "elapsed_ns": time.perf_counter_ns() - started,
@@ -381,24 +585,14 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
             "seed": args.seed,
             "gc_disabled_during_samples": True,
             "counterbalanced_pairs": True,
+            "near_floor_multiple": _NEAR_FLOOR_MULTIPLE,
+            "max_ci_width_fraction": _MAX_CI_WIDTH_FRACTION,
         },
-        "provenance": {
-            "core_sha": _git_sha(CORE_ROOT),
-            "plugin_sha": _git_sha(ROOT),
-            "pandas": pd.__version__,
-            "numpy": np.__version__,
-            "python": sys.version,
-            "rustc": _command_text(["rustc", "--version"]),
-            "cargo": _command_text(["cargo", "--version"]),
-            "platform": platform.platform(),
-            "machine": platform.machine(),
-            "processor": platform.processor(),
-            "compile_ns": compile_ns,
-        },
+        "provenance": provenance,
         "null_call_floor": {
             "loops": null_loops,
             "samples_ns_per_call": null_samples,
-            "median_ns_per_call": statistics.median(null_samples),
+            "median_ns_per_call": null_floor_median_ns,
         },
         "cells": cells,
         "break_even_first_ci95_below_one": break_even,

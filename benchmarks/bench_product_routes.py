@@ -13,10 +13,13 @@ import argparse
 import gc
 import hashlib
 import importlib
+import importlib.metadata as importlib_metadata
 import json
+import math
 import os
 import platform
 import random
+import shutil
 import statistics
 import subprocess
 import sys
@@ -25,6 +28,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 import numpy as np
 import pandas as pd
@@ -37,6 +41,14 @@ from benchmarks.cases import KERNEL_SOURCE, BenchmarkCase, make_case
 ROOT = Path(__file__).resolve().parents[1]
 CORE_ROOT = Path("/Volumes/Data/workspace/rextio/rextio-core-next")
 CORE_SHA = "ac2b79d304f13abaaecaf7714f897574c3b6256f"
+CORE_VCS_URL = "https://github.com/rextio/rextio-core-next.git"
+
+# Authoritative tracked output for a full run; smoke never touches these.
+RESULTS_DIR = ROOT / "benchmarks" / "results"
+FULL_RESULT = RESULTS_DIR / "latest.json"
+EVIDENCE_DIR = RESULTS_DIR / "evidence"
+# Only these result files are ever removed/replaced by a full run.
+_HARNESS_OWNED_RESULTS = (FULL_RESULT, EVIDENCE_DIR)
 
 
 # Eligibility is fail-closed. A headline cell must clear every one of these
@@ -49,6 +61,32 @@ def _require(condition: object, message: str) -> None:
     """Fail-closed runtime gate that survives ``python -O`` (no ``assert``)."""
     if not condition:
         raise RuntimeError(f"benchmark preflight failed: {message}")
+
+
+def _finite(value: object) -> bool:
+    return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def _normalize_dist(name: str) -> str:
+    return name.lower().replace("_", "-")
+
+
+def _distribution_direct_url(distribution: str) -> dict | None:
+    target = _normalize_dist(distribution)
+    for dist in importlib_metadata.distributions():
+        name = dist.metadata["Name"]
+        if name is None or _normalize_dist(name) != target:
+            continue
+        raw = dist.read_text("direct_url.json")
+        if raw:
+            return json.loads(raw)
+    return None
+
+
+def _file_url_to_path(url: str) -> Path:
+    parts = urlsplit(url)
+    _require(parts.scheme == "file", f"expected a file:// URL, got {url!r}")
+    return Path(unquote(parts.path)).resolve()
 
 
 def _git_sha(path: Path) -> str:
@@ -92,12 +130,21 @@ def _counterbalanced_schedule(repetitions: int, rng: random.Random) -> list[list
 
     The native-first and fallback-first counts are forced to differ by at most
     one (e.g. 5:4 or 4:5 for nine repeats) instead of being drawn independently
-    per repeat, then the balanced orders are seeded-shuffled so ordering bias
-    cannot correlate with lane.
+    per repeat. For an odd repeat count the *extra* first position is assigned
+    deterministically from the per-cell seed (not always to native), so no lane
+    is systematically favoured across cells. The balanced orders are then
+    seeded-shuffled so ordering cannot correlate with lane.
     """
-    native_first = (repetitions + 1) // 2
+    base = repetitions // 2
+    native_first = base
+    fallback_first = base
+    if repetitions % 2 == 1:
+        if rng.random() < 0.5:
+            native_first += 1
+        else:
+            fallback_first += 1
     orders = [["native", "fallback"] for _ in range(native_first)]
-    orders += [["fallback", "native"] for _ in range(repetitions - native_first)]
+    orders += [["fallback", "native"] for _ in range(fallback_first)]
     rng.shuffle(orders)
     return orders
 
@@ -142,28 +189,59 @@ def _headline_eligibility(
     fallback = samples.get("fallback", [])
     if len(native) != repetitions or len(fallback) != repetitions:
         reasons.append("missing-required-sample")
-    if any(value <= 0.0 for value in [*native, *fallback]):
-        reasons.append("nonpositive-sample")
+    if not all(_finite(value) and value > 0.0 for value in [*native, *fallback]):
+        reasons.append("nonpositive-or-nonfinite-sample")
 
-    balance = product.get("schedule_balance", {})
-    if not balance.get("is_counterbalanced", False):
+    # Recompute counterbalance from the raw schedule rather than trusting a
+    # precomputed summary, and require it to match the number of paired repeats.
+    schedule = product.get("schedule", [])
+    balance = _schedule_balance(schedule)
+    if len(schedule) != repetitions or not balance["is_counterbalanced"]:
         reasons.append("schedule-not-counterbalanced")
 
     medians = product.get("median_ns_per_call", {})
     floor = null_floor_median_ns * _NEAR_FLOOR_MULTIPLE
-    if any(medians.get(lane, 0.0) < floor for lane in ("native", "fallback")):
+    if not all(_finite(medians.get(lane)) for lane in ("native", "fallback")):
+        reasons.append("nonfinite-median")
+    elif any(medians[lane] < floor for lane in ("native", "fallback")):
         reasons.append("near-null-floor")
 
     boot = product.get("paired_bootstrap", {})
     center = boot.get("median_native_over_fallback")
     low = boot.get("ci95_low")
     high = boot.get("ci95_high")
-    if center is None or low is None or high is None or center <= 0.0:
-        reasons.append("missing-bootstrap")
+    if not (_finite(center) and _finite(low) and _finite(high)) or center <= 0.0:
+        reasons.append("missing-or-nonfinite-bootstrap")
+    elif low > high:
+        reasons.append("reversed-ci-bounds")
     elif (high - low) > _MAX_CI_WIDTH_FRACTION * center:
         reasons.append("unstable-wide-ci")
 
     return (not reasons, reasons)
+
+
+def _sustained_break_even(cells: list[dict[str, Any]]) -> int | None:
+    """Smallest Series size that is a *sustained* measured break-even.
+
+    A size qualifies only when that Series cell and every larger measured Series
+    cell are headline-eligible with a paired-bootstrap 95% CI wholly below 1.0
+    (native faster). This never interpolates; if any required larger cell is
+    ineligible or not favourable, there is no sustained break-even.
+    """
+    series_cells = sorted(
+        (cell for cell in cells if cell["route"] == "series.map"),
+        key=lambda cell: cell["size"],
+    )
+
+    def favourable(cell: dict[str, Any]) -> bool:
+        boot = cell["product"].get("paired_bootstrap", {})
+        high = boot.get("ci95_high")
+        return bool(cell["headline_eligible"]) and _finite(high) and high < 1.0
+
+    for index, cell in enumerate(series_cells):
+        if all(favourable(later) for later in series_cells[index:]):
+            return int(cell["size"])
+    return None
 
 
 def _digest(result: pd.Series) -> str:
@@ -330,7 +408,12 @@ def _numba_context(case: BenchmarkCase, target_ns: int, repetitions: int) -> dic
     try:
         import numba
     except ImportError:
-        return {"available": False, "reason": "numba is not installed"}
+        return {
+            "available": False,
+            "version": None,
+            "reason": "numba is not installed",
+            "classification": "context-only; not a Rextio target claim",
+        }
 
     if case.route == "series.map":
         values = case.argument.to_numpy(copy=False)  # type: ignore[union-attr]
@@ -368,6 +451,7 @@ def _numba_context(case: BenchmarkCase, target_ns: int, repetitions: int) -> dic
     samples = [_sample(call, loops) for _ in range(repetitions)]
     return {
         "available": True,
+        "version": numba.__version__,
         "classification": "context-only; JIT compile is not a Rextio target claim",
         "cold_compile_and_call_ns": cold_ns,
         "warm_loops": loops,
@@ -389,29 +473,42 @@ def _write_project(root: Path) -> None:
 
 
 def _preflight() -> dict[str, Any]:
-    """Gather and fail-closed-validate provenance (survives ``python -O``)."""
-    import importlib.metadata as importlib_metadata
+    """Reject any invalid state before building or timing (survives ``python -O``).
 
+    Dirty trees, a wrong installed core/plugin, a mismatched direct-URL, a
+    foreign entry point, or off-pin pandas/NumPy all stop the run here so a stale
+    or different package can never be measured and mis-attributed to the pinned
+    checkout SHAs.
+    """
     import rextio
     import rextio_pandas
     from rextio.plugins.api import PLUGIN_API_VERSION
+    from rextio_pandas.plugin import plugin as this_plugin
 
     _require(
         PLUGIN_API_VERSION == "1.3",
         f"core advertises plugin API {PLUGIN_API_VERSION!r}, need '1.3'",
     )
+    _require(pd.__version__ == "2.3.3", f"pandas is {pd.__version__!r}, need '2.3.3'")
+    _require(np.__version__ == "2.3.5", f"numpy is {np.__version__!r}, need '2.3.5'")
+
+    # Exact clean core and plugin worktrees, pinned once as the measured code.
+    _require(not _git_dirty(CORE_ROOT), "core-next worktree is dirty")
+    _require(not _git_dirty(ROOT), "plugin worktree is dirty")
+    core_sha = _git_sha(CORE_ROOT)
+    plugin_sha = _git_sha(ROOT)
+    _require(core_sha == CORE_SHA, f"core-next HEAD {core_sha} != required {CORE_SHA}")
 
     core_file = Path(rextio.__file__).resolve()
     plugin_file = Path(rextio_pandas.__file__).resolve()
-    _require(
-        "rextio-core-next" in core_file.parts,
-        f"imported rextio is not the integrated core-next checkout: {core_file}",
-    )
 
-    core_direct_url = importlib_metadata.distribution("rextio").read_text("direct_url.json")
-    plugin_direct_url = importlib_metadata.distribution("rextio-pandas").read_text(
-        "direct_url.json"
-    )
+    core_direct_url = _distribution_direct_url("rextio")
+    _require(core_direct_url is not None, "core has no direct_url.json provenance")
+    core_mode = _validate_core_direct_url(core_direct_url, core_file)
+
+    plugin_direct_url = _distribution_direct_url("rextio-pandas")
+    _require(plugin_direct_url is not None, "plugin has no direct_url.json provenance")
+    plugin_mode = _validate_plugin_direct_url(plugin_direct_url, plugin_file)
 
     entry_points = [
         {"name": ep.name, "value": ep.value, "dist": ep.dist.name if ep.dist else None}
@@ -419,23 +516,30 @@ def _preflight() -> dict[str, Any]:
         if ep.name == "rextio-pandas"
     ]
     _require(
-        any(
+        entry_points
+        and all(
             ep["value"] == "rextio_pandas.plugin:plugin" and ep["dist"] == "rextio-pandas"
             for ep in entry_points
         ),
         f"rextio-pandas entry point is not provided by this checkout: {entry_points}",
     )
-
+    loaded = [
+        ep
+        for ep in importlib_metadata.entry_points(group="rextio.plugins")
+        if ep.name == "rextio-pandas"
+    ]
     _require(
-        _git_sha(CORE_ROOT) == CORE_SHA,
-        "core-next is not at the required integrated commit",
+        all(ep.load() is this_plugin for ep in loaded),
+        "rextio-pandas entry point does not load this exact plugin object",
     )
 
     return {
-        "core_sha": _git_sha(CORE_ROOT),
-        "core_dirty": _git_dirty(CORE_ROOT),
-        "plugin_sha": _git_sha(ROOT),
-        "plugin_dirty": _git_dirty(ROOT),
+        "core_sha": core_sha,
+        "core_dirty": False,
+        "plugin_sha": plugin_sha,
+        "plugin_dirty": False,
+        "core_install_mode": core_mode,
+        "plugin_install_mode": plugin_mode,
         "core_import_file": str(core_file),
         "plugin_import_file": str(plugin_file),
         "core_direct_url": core_direct_url,
@@ -456,6 +560,53 @@ def _preflight() -> dict[str, Any]:
     }
 
 
+def _validate_core_direct_url(direct_url: dict, core_file: Path) -> str:
+    """Fail-closed check of the core direct URL for the active install mode."""
+    if direct_url.get("dir_info", {}).get("editable"):
+        checkout = _file_url_to_path(direct_url["url"])
+        _require(
+            core_file.is_relative_to(checkout),
+            f"imported rextio {core_file} is not under editable checkout {checkout}",
+        )
+        _require(
+            checkout.resolve() == CORE_ROOT.resolve(),
+            f"editable core checkout {checkout} != expected {CORE_ROOT}",
+        )
+        return "editable"
+    if "vcs_info" in direct_url:
+        _require(direct_url["url"] == CORE_VCS_URL, f"core VCS URL {direct_url['url']!r}")
+        _require("@" not in urlsplit(direct_url["url"]).netloc, "core URL leaks a credential")
+        _require(direct_url["vcs_info"].get("vcs") == "git", "core direct URL is not git")
+        _require(
+            direct_url["vcs_info"].get("commit_id") == CORE_SHA,
+            f"core VCS commit {direct_url['vcs_info'].get('commit_id')!r} != {CORE_SHA}",
+        )
+        return "vcs"
+    raise RuntimeError(f"benchmark preflight failed: unrecognized core provenance: {direct_url}")
+
+
+def _validate_plugin_direct_url(direct_url: dict, plugin_file: Path) -> str:
+    """Fail-closed check of the plugin direct URL for the active install mode."""
+    if direct_url.get("dir_info", {}).get("editable"):
+        checkout = _file_url_to_path(direct_url["url"])
+        _require(
+            checkout.resolve() == ROOT.resolve(),
+            f"editable plugin checkout {checkout} != this WP-5 checkout {ROOT}",
+        )
+        _require(
+            plugin_file.is_relative_to(checkout / "src"),
+            f"imported rextio_pandas {plugin_file} is not under {checkout / 'src'}",
+        )
+        return "editable"
+    if "archive_info" in direct_url:
+        wheel = direct_url["url"].rsplit("/", 1)[-1]
+        _require(wheel.endswith(".whl"), f"plugin archive is not a wheel: {wheel}")
+        _require("rextio_pandas-" in wheel, f"plugin wheel is not rextio_pandas: {wheel}")
+        _require(bool(direct_url["archive_info"].get("hashes")), "plugin wheel has no hash")
+        return "wheel"
+    raise RuntimeError(f"benchmark preflight failed: unrecognized plugin provenance: {direct_url}")
+
+
 def _bench(args: argparse.Namespace) -> dict[str, Any]:
     provenance = _preflight()
     sizes = [10, 1000] if args.smoke else [1, 10, 100, 1000, 10_000, 100_000]
@@ -468,7 +619,10 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
         compile_started = time.perf_counter_ns()
         project = build_certification_project(project_root)
         compile_ns = time.perf_counter_ns() - compile_started
-        check_bytes = (project_root / ".rextio" / "reports" / "check.json").read_bytes()
+        reports_dir = project_root / ".rextio" / "reports"
+        check_path = reports_dir / "check.json"
+        build_path = reports_dir / "build.json"
+        check_bytes = check_path.read_bytes()
         report = json.loads(check_bytes.decode("utf-8"))
         routes = {
             function["qualname"]: function["route"]
@@ -484,15 +638,77 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
                 routes.get(qualname) == expected_route,
                 f"{qualname} routed {routes.get(qualname)!r}, expected {expected_route!r}",
             )
-        provenance["check_report_sha256"] = hashlib.sha256(check_bytes).hexdigest()
-        provenance["claimed_native_routes"] = {
-            qualname: routes[qualname] for qualname in expected_routes
+
+        # Preserve and verify the native-build report; it must agree with check.
+        _require(build_path.exists(), "build.json is missing")
+        build_bytes = build_path.read_bytes()
+        build_report = json.loads(build_bytes.decode("utf-8"))
+        native_build = build_report.get("native_build", {})
+        _require(build_report.get("status") == "built", "build status is not 'built'")
+        _require(native_build.get("status") == "built", "native build did not complete")
+        _require(
+            build_report.get("accepted_native_count", 0) >= len(expected_routes),
+            "build report accepted fewer native functions than the checked routes",
+        )
+        _require(
+            build_report.get("rejected_native_count", 0) == 0,
+            "build report rejected a native function",
+        )
+        native_artifact = Path(native_build["installed_path"]).resolve()
+        _require(native_artifact.exists(), f"native artifact missing: {native_artifact}")
+        _require(
+            native_artifact.is_relative_to(project_root),
+            "native artifact resolves outside the freshly built project",
+        )
+        generated_python_dir = (project_root / ".rextio" / "generated" / "python").resolve()
+
+        provenance["check_report"] = {
+            "path": str(check_path),
+            "sha256": hashlib.sha256(check_bytes).hexdigest(),
+            "routes": {qualname: routes[qualname] for qualname in expected_routes},
         }
+        provenance["build_report"] = {
+            "path": str(build_path),
+            "sha256": hashlib.sha256(build_bytes).hexdigest(),
+            "status": build_report.get("status"),
+            "native_build_status": native_build.get("status"),
+            "accepted_native_count": build_report.get("accepted_native_count"),
+            "rejected_native_count": build_report.get("rejected_native_count"),
+        }
+        provenance["native_artifact"] = {
+            "path": str(native_artifact),
+            "sha256": _sha256_files([native_artifact]),
+        }
+        provenance["generated_python_dir"] = str(generated_python_dir)
+        # Back-compat aliases retained for readers of the previous schema.
+        provenance["check_report_sha256"] = provenance["check_report"]["sha256"]
+        provenance["claimed_native_routes"] = provenance["check_report"]["routes"]
         provenance["compile_ns"] = compile_ns
+        provenance["report_evidence_files"] = {
+            "check.json": check_bytes.decode("utf-8"),
+            "build.json": build_bytes.decode("utf-8"),
+        }
 
         sys.path.insert(0, str(project.build_python_dir))
         try:
             module = importlib.import_module("bench_app.kernels")
+            # The timed code must come from the freshly built project, never a
+            # cache or global install.
+            build_python_dir = Path(project.build_python_dir).resolve()
+            _require(
+                Path(module.__file__).resolve().is_relative_to(build_python_dir),
+                f"imported kernels {module.__file__} is not under {build_python_dir}",
+            )
+            native_module = sys.modules.get("_rextio_native")
+            _require(native_module is not None, "native module was not imported")
+            _require(
+                Path(native_module.__file__).resolve().is_relative_to(project_root),
+                "imported native module resolves outside the freshly built project",
+            )
+            provenance["timing_imports"] = {
+                "kernels": str(Path(module.__file__).resolve()),
+                "native_module": str(Path(native_module.__file__).resolve()),
+            }
             cells: list[dict[str, Any]] = []
             for route_index, route in enumerate(("series.map", "dataframe.apply")):
                 for size_index, size in enumerate(sizes):
@@ -562,19 +778,16 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
         cell["headline_eligible"] = eligible
         cell["headline_ineligible_reasons"] = reasons
 
-    break_even: dict[str, int | None] = {}
-    for route in ("series.map", "dataframe.apply"):
-        eligible = [
-            cell
-            for cell in cells
-            if cell["route"] == route
-            and cell["headline_eligible"]
-            and cell["product"]["paired_bootstrap"]["ci95_high"] < 1.0
-        ]
-        break_even[route] = min((cell["size"] for cell in eligible), default=None)
+    # Sustained measured break-even: DataFrame stays headline-ineligible, so it
+    # is always ``none``; Series requires favourability at the size and every
+    # larger measured size (no interpolation).
+    sustained_break_even: dict[str, int | None] = {
+        "series.map": _sustained_break_even(cells),
+        "dataframe.apply": None,
+    }
 
     return {
-        "schema": 2,
+        "schema": 3,
         "smoke": args.smoke,
         "generated_at_unix_ns": time.time_ns(),
         "elapsed_ns": time.perf_counter_ns() - started,
@@ -595,8 +808,64 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
             "median_ns_per_call": null_floor_median_ns,
         },
         "cells": cells,
-        "break_even_first_ci95_below_one": break_even,
+        "sustained_break_even": sustained_break_even,
+        "sustained_break_even_definition": (
+            "smallest measured Series size whose paired-bootstrap 95% CI is wholly "
+            "below 1.0 and remains so at every larger measured Series size, with "
+            "every required larger cell headline-eligible; not interpolated"
+        ),
     }
+
+
+def _pop_report_evidence(result: dict[str, Any]) -> dict[str, str]:
+    """Detach the raw report bodies so they land in evidence files, not JSON."""
+    provenance = result.get("provenance", {})
+    return provenance.pop("report_evidence_files", {})
+
+
+def _write_smoke_output(result: dict[str, Any], output: Path | None) -> Path:
+    """Write a smoke result only to an ignored/temp location.
+
+    A smoke run must never delete or overwrite the tracked authoritative
+    ``latest.json`` (or its evidence directory).
+    """
+    if output is None:
+        output = Path(tempfile.mkdtemp(prefix="rextio-pandas-smoke-")) / "smoke.json"
+    output = output.resolve()
+    for owned in _HARNESS_OWNED_RESULTS:
+        _require(
+            output != owned.resolve() and not output.is_relative_to(EVIDENCE_DIR.resolve()),
+            f"smoke output {output} must not touch the authoritative result {owned}",
+        )
+    _pop_report_evidence(result)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return output
+
+
+def _write_full_output(result: dict[str, Any]) -> Path:
+    """Atomically replace only the harness-owned authoritative result + evidence.
+
+    The tree was already validated clean by the preflight, so a previous tracked
+    result does not block a rerun: this replaces just ``latest.json`` and the
+    ``evidence/`` directory (never an arbitrary glob of the output folder).
+    """
+    evidence = _pop_report_evidence(result)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Refresh only the harness-owned evidence directory.
+    if EVIDENCE_DIR.exists():
+        shutil.rmtree(EVIDENCE_DIR)
+    EVIDENCE_DIR.mkdir(parents=True)
+    for name, body in evidence.items():
+        (EVIDENCE_DIR / name).write_text(body, encoding="utf-8")
+
+    # Atomic replace of the tracked result file.
+    payload = json.dumps(result, indent=2, sort_keys=True) + "\n"
+    tmp = FULL_RESULT.with_suffix(".json.tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, FULL_RESULT)
+    return FULL_RESULT
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -608,17 +877,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "benchmarks" / "results" / "latest.json",
+        default=None,
+        help="Smoke-only explicit output path; ignored for full runs.",
     )
     args = parser.parse_args(argv)
     result = _bench(args)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    for old in args.output.parent.glob("*.json"):
-        old.unlink()
-    args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(args.output)
-    for route, size in result["break_even_first_ci95_below_one"].items():
-        print(f"{route}: first measured CI95-native-win size={size}")
+
+    if args.smoke:
+        output = _write_smoke_output(result, args.output)
+    else:
+        _require(
+            args.output is None,
+            "full runs always write the tracked authoritative result; --output is smoke-only",
+        )
+        output = _write_full_output(result)
+
+    print(output)
+    for route, size in result["sustained_break_even"].items():
+        print(f"{route}: sustained measured break-even size={size}")
     return 0
 
 

@@ -110,7 +110,9 @@ def test_installed_plugin_provenance_matches_this_checkout_or_its_wheel() -> Non
     if direct_url.get("dir_info", {}).get("editable"):
         checkout = _file_url_to_path(direct_url["url"])
         assert checkout == ROOT, (checkout, ROOT)
-        assert str(plugin_file).startswith(str(checkout / "src")), plugin_file
+        # Resolved path-boundary containment, not a string prefix (a sibling
+        # ``src-evil`` directory must not satisfy an ``src`` prefix).
+        assert plugin_file.is_relative_to(checkout / "src"), plugin_file
     elif "archive_info" in direct_url:
         # Wheel install: the import lives in site-packages and the recorded
         # archive is a rextio_pandas wheel with a pinned hash.
@@ -120,6 +122,17 @@ def test_installed_plugin_provenance_matches_this_checkout_or_its_wheel() -> Non
         assert direct_url["archive_info"]["hashes"], direct_url
     else:
         raise AssertionError(f"unrecognized plugin install provenance: {direct_url}")
+
+
+def test_editable_src_boundary_rejects_sibling_prefix() -> None:
+    # A string ``startswith`` check would wrongly accept a sibling ``src-evil``
+    # directory; resolved ``is_relative_to`` must not.
+    checkout = ROOT
+    inside = (checkout / "src" / "rextio_pandas" / "__init__.py").resolve()
+    sibling = (checkout / "src-evil" / "rextio_pandas" / "__init__.py").resolve()
+    assert inside.is_relative_to(checkout / "src")
+    assert not sibling.is_relative_to(checkout / "src")
+    assert str(sibling).startswith(str(checkout / "src"))  # the trap the old check fell into
 
 
 def test_selected_entry_point_loads_this_exact_plugin_object() -> None:

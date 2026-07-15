@@ -116,6 +116,7 @@ def _command_text(command: Sequence[str]) -> str:
 
 
 def _sha256_files(paths: Sequence[Path]) -> str:
+    # A multi-file *manifest* digest (name + NUL framing). NOT a raw file hash.
     digest = hashlib.sha256()
     for path in sorted(paths):
         digest.update(path.name.encode("utf-8"))
@@ -123,6 +124,22 @@ def _sha256_files(paths: Sequence[Path]) -> str:
         digest.update(path.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    """Standard SHA-256 of a single file's raw bytes (no name/framing)."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _require_exact_native_artifact(installed_path: str, imported_file: str) -> Path:
+    """Bind the timed native module to the exact built artifact path."""
+    installed = Path(installed_path).resolve()
+    imported = Path(imported_file).resolve()
+    _require(
+        imported == installed,
+        f"imported native module {imported} is not the built artifact {installed}",
+    )
+    return installed
 
 
 def _counterbalanced_schedule(repetitions: int, rng: random.Random) -> list[list[str]]:
@@ -149,14 +166,26 @@ def _counterbalanced_schedule(repetitions: int, rng: random.Random) -> list[list
     return orders
 
 
+_VALID_SCHEDULE_PAIRS = (("native", "fallback"), ("fallback", "native"))
+
+
 def _schedule_balance(schedule: Sequence[Sequence[str]]) -> dict[str, Any]:
-    native_first = sum(1 for order in schedule if order[0] == "native")
-    fallback_first = sum(1 for order in schedule if order[0] == "fallback")
+    # Every raw pair must be exactly one of the two valid orderings; a malformed
+    # pair (duplicate/unknown/missing/extra lane) cannot look "balanced" via a
+    # first-position count.
+    all_pairs_valid = all(
+        isinstance(order, (list, tuple)) and tuple(order) in _VALID_SCHEDULE_PAIRS
+        for order in schedule
+    )
+    native_first = sum(1 for order in schedule if len(order) >= 1 and order[0] == "native")
+    fallback_first = sum(1 for order in schedule if len(order) >= 1 and order[0] == "fallback")
     return {
         "native_first": native_first,
         "fallback_first": fallback_first,
+        "all_pairs_valid": all_pairs_valid,
         "is_counterbalanced": (
-            len(schedule) > 0
+            all_pairs_valid
+            and len(schedule) > 0
             and native_first + fallback_first == len(schedule)
             and abs(native_first - fallback_first) <= 1
         ),
@@ -546,7 +575,7 @@ def _preflight() -> dict[str, Any]:
         "plugin_direct_url": plugin_direct_url,
         "plugin_api_version": PLUGIN_API_VERSION,
         "selected_entry_points": entry_points,
-        "harness_digest": _sha256_files(
+        "harness_manifest_sha256": _sha256_files(
             [Path(__file__).resolve(), ROOT / "benchmarks" / "cases.py"]
         ),
         "pandas": pd.__version__,
@@ -677,7 +706,8 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
         }
         provenance["native_artifact"] = {
             "path": str(native_artifact),
-            "sha256": _sha256_files([native_artifact]),
+            # Standard raw-bytes SHA-256 of the artifact file (not a manifest).
+            "sha256": _sha256_file(native_artifact),
         }
         provenance["generated_python_dir"] = str(generated_python_dir)
         # Back-compat aliases retained for readers of the previous schema.
@@ -692,22 +722,25 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
         sys.path.insert(0, str(project.build_python_dir))
         try:
             module = importlib.import_module("bench_app.kernels")
-            # The timed code must come from the freshly built project, never a
-            # cache or global install.
+            # The timed Python wrapper must be the exact generated file, and the
+            # timed native extension must be the exact built artifact -- not
+            # merely something under the same project tree, and never a cache or
+            # global install.
             build_python_dir = Path(project.build_python_dir).resolve()
+            expected_kernels = (build_python_dir / "bench_app" / "kernels.py").resolve()
             _require(
-                Path(module.__file__).resolve().is_relative_to(build_python_dir),
-                f"imported kernels {module.__file__} is not under {build_python_dir}",
+                Path(module.__file__).resolve() == expected_kernels,
+                f"imported kernels {module.__file__} is not the generated {expected_kernels}",
             )
             native_module = sys.modules.get("_rextio_native")
             _require(native_module is not None, "native module was not imported")
-            _require(
-                Path(native_module.__file__).resolve().is_relative_to(project_root),
-                "imported native module resolves outside the freshly built project",
+            bound_artifact = _require_exact_native_artifact(
+                native_build["installed_path"], native_module.__file__
             )
             provenance["timing_imports"] = {
                 "kernels": str(Path(module.__file__).resolve()),
                 "native_module": str(Path(native_module.__file__).resolve()),
+                "native_artifact_bound": str(bound_artifact),
             }
             cells: list[dict[str, Any]] = []
             for route_index, route in enumerate(("series.map", "dataframe.apply")):

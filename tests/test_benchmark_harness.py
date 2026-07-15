@@ -100,6 +100,75 @@ def test_schedule_balance_flags_independent_draw_imbalance() -> None:
     assert balance["is_counterbalanced"] is False
 
 
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        # duplicate-lane pairs that happen to look 5:4 by first position
+        [["native", "native"]] * 5 + [["fallback", "fallback"]] * 4,
+        # unknown lane
+        [["native", "sideways"]] * 5 + [["fallback", "native"]] * 4,
+        # missing lane (too short)
+        [["native"]] * 5 + [["fallback", "native"]] * 4,
+        # extra lane (too long)
+        [["native", "fallback", "native"]] * 5 + [["fallback", "native"]] * 4,
+        # duplicate-lane single pair among otherwise valid ones
+        [["native", "native"]] + [["fallback", "native"]] * 4 + [["native", "fallback"]] * 4,
+    ],
+)
+def test_schedule_balance_rejects_malformed_pairs(schedule: list) -> None:
+    balance = _schedule_balance(schedule)
+    assert balance["all_pairs_valid"] is False
+    assert balance["is_counterbalanced"] is False
+
+
+def test_schedule_balance_accepts_only_valid_pairs() -> None:
+    schedule = [["native", "fallback"]] * 5 + [["fallback", "native"]] * 4
+    balance = _schedule_balance(schedule)
+    assert balance["all_pairs_valid"] is True
+    assert balance["is_counterbalanced"] is True
+
+
+# --- item 3: native artifact raw SHA + exact-path binding -------------------
+
+
+def test_sha256_file_is_the_raw_bytes_digest(tmp_path: Path) -> None:
+    import hashlib
+
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(b"\x00\x01native-artifact\xff")
+    assert bench._sha256_file(path) == hashlib.sha256(path.read_bytes()).hexdigest()
+    # The manifest digest folds in the filename/framing, so the two differ.
+    assert bench._sha256_file(path) != bench._sha256_files([path])
+
+
+def test_sha256_file_changes_only_with_bytes(tmp_path: Path) -> None:
+    a = tmp_path / "a.so"
+    a.write_bytes(b"same-bytes")
+    first = bench._sha256_file(a)
+    # A different file (different name) with identical bytes hashes the same.
+    b = tmp_path / "b.so"
+    b.write_bytes(b"same-bytes")
+    assert bench._sha256_file(b) == first
+    # Changing the bytes changes the digest.
+    b.write_bytes(b"other-bytes")
+    assert bench._sha256_file(b) != first
+
+
+def test_native_artifact_binding_rejects_a_different_file(tmp_path: Path) -> None:
+    installed = tmp_path / "generated" / "_rextio_native.so"
+    installed.parent.mkdir(parents=True)
+    installed.write_bytes(b"artifact")
+    sibling = tmp_path / "generated" / "_rextio_native_other.so"
+    sibling.write_bytes(b"artifact")  # same bytes, different path under same tree
+    # Exact-path binding: the genuine artifact passes.
+    assert (
+        bench._require_exact_native_artifact(str(installed), str(installed)) == installed.resolve()
+    )
+    # A different file beneath the same project root is rejected.
+    with pytest.raises(RuntimeError):
+        bench._require_exact_native_artifact(str(installed), str(sibling))
+
+
 # --- G: fail-closed eligibility recomputed from the raw schedule ------------
 
 
@@ -339,7 +408,7 @@ def test_preflight_gathers_provenance_on_a_clean_tree() -> None:
         "plugin_direct_url",
         "plugin_api_version",
         "selected_entry_points",
-        "harness_digest",
+        "harness_manifest_sha256",
         "pandas",
         "numpy",
         "rustc",

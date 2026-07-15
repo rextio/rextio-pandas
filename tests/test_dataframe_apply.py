@@ -331,6 +331,7 @@ def test_boundary_uses_type_tagged_digest_not_repr() -> None:
         ("__RXTPD_SERIES_TO_NUMPY_DIGEST", "series_to_numpy"),
         ("__RXTPD_FRAME_APPLY_DIGEST", "frame_apply"),
         ("__RXTPD_FRAME_TO_NUMPY_DIGEST", "frame_to_numpy"),
+        ("__RXTPD_APPLY_FRAME_APPLY_DIGEST", "apply_frame_apply"),
     ):
         assert f'const {constant}: &str = "{_AUTHORITY_CODE_DIGESTS[key]}"' in source
         assert f"!= {constant}" in source
@@ -350,17 +351,96 @@ def test_boundary_uses_type_tagged_digest_not_repr() -> None:
     assert 'py.import("pandas._libs.lib")' in source
 
 
-def test_authority_code_digests_match_pinned_pandas() -> None:
-    # The frozen constants must equal the live pinned pandas so drift is caught
-    # loudly, not silently trusted.
-    import pandas as pd
+def test_import_target_is_validated_against_a_frozen_authority_not_metadata() -> None:
+    # The DataFrame.apply import target ``pandas.core.apply.frame_apply`` must be
+    # checked by a frozen-authority validator (exact code digest + structural
+    # defaults/globals), not accepted on metadata alone.
+    source = boundary_helpers()
+    assert "fn __rxtpd_validate_apply_frame_apply(" in source
+    # DataFrame.apply's import_from check delegates to that validator.
+    assert 'let target = imported.getattr("frame_apply")' in source
+    assert "__rxtpd_validate_apply_frame_apply(py, &target)?;" in source
+    # The old metadata-only acceptance of the import target (compare __module__
+    # and __qualname__ on ``target`` then trust it) must be gone.
+    assert 'target.getattr("__module__")' not in source
+    assert 'target.getattr("__qualname__")' not in source
+    # The frozen code digest is what actually guards the imported function.
+    validator = source[source.index("fn __rxtpd_validate_apply_frame_apply(") :]
+    validator = validator[: validator.index("\n}\n") + 3]
+    assert "!= __RXTPD_APPLY_FRAME_APPLY_DIGEST" in validator
+    assert '__closure__")?.is_none()' in validator
+    assert '__kwdefaults__")?.is_none()' in validator
 
-    live = {
+
+def test_metadata_and_globals_matching_frame_apply_replacement_is_caught_by_digest() -> None:
+    # The precise blocker: a replacement built with types.FunctionType that has
+    # the exact function type, __module__, __qualname__ and the pinned
+    # pandas.core.apply globals dict -- everything the previous weak import check
+    # verified -- but a DIFFERENT code object. Only the frozen code digest
+    # separates it from the canonical authority.
+    import types
+
+    import pandas.core.apply as apply_mod
+
+    original = apply_mod.frame_apply
+
+    def impostor(
+        obj: object,
+        func: object,
+        axis: object = 0,
+        raw: bool = False,
+        result_type: object = None,
+        by_row: str = "compat",
+        engine: str = "python",
+        engine_kwargs: object = None,
+        args: object = None,
+        kwargs: object = None,
+    ) -> object:
+        raise RuntimeError("impostor frame_apply executed")
+
+    forged = types.FunctionType(
+        impostor.__code__,
+        apply_mod.__dict__,
+        "frame_apply",
+        original.__defaults__,
+        original.__closure__,
+    )
+    forged.__module__ = "pandas.core.apply"
+    forged.__qualname__ = "frame_apply"
+
+    # Everything the previous metadata-only check verified matches exactly.
+    assert type(forged) is type(original)
+    assert forged.__module__ == original.__module__ == "pandas.core.apply"
+    assert forged.__qualname__ == original.__qualname__ == "frame_apply"
+    assert forged.__globals__ is apply_mod.__dict__
+    assert forged.__closure__ is None and forged.__kwdefaults__ is None
+    assert forged.__defaults__ == original.__defaults__
+    # The frozen code-digest authority is what rejects the forgery.
+    assert forged.__code__ is not original.__code__
+    assert compute_authority_code_digest(forged) != _AUTHORITY_CODE_DIGESTS["apply_frame_apply"]
+    assert compute_authority_code_digest(original) == _AUTHORITY_CODE_DIGESTS["apply_frame_apply"]
+
+
+def _live_authority_functions() -> dict[str, object]:
+    import pandas as pd
+    import pandas.core.apply as apply_mod
+
+    return {
         "series_map": pd.Series.__dict__["map"],
         "series_to_numpy": pd.Series.to_numpy,
         "frame_apply": pd.DataFrame.__dict__["apply"],
         "frame_to_numpy": pd.DataFrame.__dict__["to_numpy"],
+        # DataFrame.apply imports this module-level function at call time; it is a
+        # frozen authority in its own right, not trusted via the live binding.
+        "apply_frame_apply": apply_mod.frame_apply,
     }
+
+
+def test_authority_code_digests_match_pinned_pandas() -> None:
+    # The frozen constants must equal the live pinned pandas so drift is caught
+    # loudly, not silently trusted.
+    live = _live_authority_functions()
+    assert set(live) == set(_AUTHORITY_CODE_DIGESTS)
     for key, function in live.items():
         assert compute_authority_code_digest(function) == _AUTHORITY_CODE_DIGESTS[key]
 
@@ -398,14 +478,8 @@ def test_global_binding_specs_match_live_bytecode() -> None:
     # silently escape the runtime binding checks.
     import dis
 
-    import pandas as pd
-
-    live = {
-        "series_map": pd.Series.__dict__["map"],
-        "series_to_numpy": pd.Series.to_numpy,
-        "frame_apply": pd.DataFrame.__dict__["apply"],
-        "frame_to_numpy": pd.DataFrame.__dict__["to_numpy"],
-    }
+    live = _live_authority_functions()
+    assert set(live) == set(_AUTHORITY_GLOBALS)
     for key, function in live.items():
         load_globals = {
             ins.argval for ins in dis.get_instructions(function) if ins.opname == "LOAD_GLOBAL"

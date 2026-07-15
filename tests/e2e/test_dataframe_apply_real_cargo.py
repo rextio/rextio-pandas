@@ -533,6 +533,76 @@ def _run():
     assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["frame_method"]]
 
 
+def test_forged_frame_apply_import_target_with_matching_metadata_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    # Regression for the import-authority blocker: a replacement
+    # ``pandas.core.apply.frame_apply`` built with ``types.FunctionType`` that
+    # exactly matches the canonical function type, ``__module__``,
+    # ``__qualname__`` and reuses ``pandas.core.apply.__dict__`` as its globals
+    # -- but carries a DIFFERENT code object -- must be rejected. The prior
+    # metadata-only check accepted this; only the frozen code-digest authority
+    # catches it. A plain lambda (see the mutated-import test) does not exercise
+    # this bypass because its module/qualname/globals differ.
+    body = """
+import types
+import pandas as pd
+import pandas.core.apply as apply_mod
+from pandas_app.frames import apply_two
+
+_orig = apply_mod.frame_apply
+
+
+def _impostor(
+    obj,
+    func,
+    axis=0,
+    raw=False,
+    result_type=None,
+    by_row="compat",
+    engine="python",
+    engine_kwargs=None,
+    args=None,
+    kwargs=None,
+):
+    # A body that would change/break the Python execution path if trusted.
+    raise RuntimeError("impostor frame_apply executed")
+
+
+_forged = types.FunctionType(
+    _impostor.__code__,
+    apply_mod.__dict__,
+    "frame_apply",
+    _orig.__defaults__,
+    _orig.__closure__,
+)
+_forged.__module__ = "pandas.core.apply"
+_forged.__qualname__ = "frame_apply"
+
+# The forgery satisfies every check the previous weak validator applied.
+assert type(_forged) is type(_orig)
+assert _forged.__module__ == _orig.__module__ == "pandas.core.apply"
+assert _forged.__qualname__ == _orig.__qualname__ == "frame_apply"
+assert _forged.__globals__ is apply_mod.__dict__
+assert _forged.__code__ is not _orig.__code__
+
+apply_mod.frame_apply = _forged
+frame = pd.DataFrame({"left": [1.0, 2.0], "right": [3.0, 4.0]}, dtype="float64")
+try:
+    apply_two(frame)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("forged frame_apply import target was accepted")
+finally:
+    apply_mod.frame_apply = _orig
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["frame_method"]]
+
+
 def test_arrow_backed_frame_rejected_when_pyarrow_available(project: CertifiedProject) -> None:
     if importlib.util.find_spec("pyarrow") is None:
         pytest.skip("pyarrow is not installed; Arrow-backed storage cannot be constructed")

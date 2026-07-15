@@ -40,12 +40,18 @@ _AUTHORITY_CODE_DIGESTS = {
     "series_to_numpy": "1d2a907fafe5072adc69dde5099e4a83b48102e68e9d35e0aafbec8d16e70050",
     "frame_apply": "82441419a1a610c5b2e81af0c6978974682fb3116e8f10de5b9313641fec00d1",
     "frame_to_numpy": "ff8ef88dbed7a3c530f339452059b2aae33e65e73c3f58ae60f01c4469bb5e71",
+    # ``DataFrame.apply`` imports ``pandas.core.apply.frame_apply`` at call time.
+    # That imported function is a trusted authority too, so its code object is
+    # frozen exactly like the four bound methods above (never re-derived from the
+    # live, mutable ``pandas.core.apply.frame_apply`` binding at lowering).
+    "apply_frame_apply": "38fa716dab42aa69bddb5dfc11c58f9b7c5b64e8e2f97dd2a5f5630cbfb168c2",
 }
 _AUTHORITY_META = {
     "series_map": {"module": "pandas.core.series", "qualname": "Series.map"},
     "series_to_numpy": {"module": "pandas.core.base", "qualname": "IndexOpsMixin.to_numpy"},
     "frame_apply": {"module": "pandas.core.frame", "qualname": "DataFrame.apply"},
     "frame_to_numpy": {"module": "pandas.core.frame", "qualname": "DataFrame.to_numpy"},
+    "apply_frame_apply": {"module": "pandas.core.apply", "qualname": "frame_apply"},
 }
 # Structural default specs, validated item-by-item with exact type/identity
 # checks. ``no_default`` is the exact ``pandas._libs.lib.no_default`` singleton.
@@ -62,6 +68,18 @@ _AUTHORITY_DEFAULTS = {
         ("none",),
     ),
     "frame_to_numpy": (("none",), ("bool", False), ("no_default",)),
+    # frame_apply(obj, func, axis=0, raw=False, result_type=None, by_row="compat",
+    #             engine="python", engine_kwargs=None, args=None, kwargs=None)
+    "apply_frame_apply": (
+        ("int", 0),
+        ("bool", False),
+        ("none",),
+        ("str", "compat"),
+        ("str", "python"),
+        ("none",),
+        ("none",),
+        ("none",),
+    ),
 }
 # Execution-relevant global bindings, derived from each pinned method's
 # ``LOAD_GLOBAL``/``IMPORT_NAME`` set. Every binding must be identical to the
@@ -91,6 +109,19 @@ _AUTHORITY_GLOBALS: dict[str, dict[str, tuple]] = {
         "builtins": (),
         "modules": (("np", "numpy"),),
         "module_attrs": (),
+        "import_from": (),
+    },
+    # The imported frame_apply function loads only these three canonical
+    # pandas.core.apply members; the drift test re-derives them from live
+    # bytecode so an added LOAD_GLOBAL cannot escape the identity checks.
+    "apply_frame_apply": {
+        "builtins": (),
+        "modules": (),
+        "module_attrs": (
+            ("FrameColumnApply", "pandas.core.apply", "FrameColumnApply"),
+            ("FrameRowApply", "pandas.core.apply", "FrameRowApply"),
+            ("reconstruct_func", "pandas.core.apply", "reconstruct_func"),
+        ),
         "import_from": (),
     },
 }
@@ -169,6 +200,7 @@ _DIGEST_CONST = {
     "series_to_numpy": "__RXTPD_SERIES_TO_NUMPY_DIGEST",
     "frame_apply": "__RXTPD_FRAME_APPLY_DIGEST",
     "frame_to_numpy": "__RXTPD_FRAME_TO_NUMPY_DIGEST",
+    "apply_frame_apply": "__RXTPD_APPLY_FRAME_APPLY_DIGEST",
 }
 
 # Fixed Rust helpers: type-tagged canonical encoding + pinned-crate SHA-256, all
@@ -386,27 +418,37 @@ def _globals_rs(spec: dict) -> str:
     for impmod, attr in spec["import_from"]:
         rm = _rust_string(impmod)
         ra = _rust_string(attr)
+        # The imported target is validated against its own independently frozen
+        # canonical authority (exact function type, module, qualname, code digest,
+        # structural defaults/kwdefaults/closure, and its own global bindings) --
+        # NOT merely by re-reading and trusting the same mutable module binding.
+        # A replacement with matching metadata and the pinned globals dict but a
+        # different code object fails the frozen code-digest check.
+        validator_key = _import_target_validator_key(impmod, attr)
         blocks.append(
             "    {\n"
             "        let imported = py.import(" + rm + ")?;\n"
             "        let target = imported.getattr("
             + ra
             + ").map_err(|_| __rxtpd_type_error(error))?;\n"
-            '        if !target.is_exact_instance(&types_module.getattr("FunctionType")?) {\n'
-            "            return Err(__rxtpd_type_error(error));\n"
-            "        }\n"
-            '        if target.getattr("__module__")?.extract::<String>()? != ' + rm + " {\n"
-            "            return Err(__rxtpd_type_error(error));\n"
-            "        }\n"
-            '        if target.getattr("__qualname__")?.extract::<String>()? != ' + ra + " {\n"
-            "            return Err(__rxtpd_type_error(error));\n"
-            "        }\n"
-            '        if !target.getattr("__globals__")?.is(&imported.getattr("__dict__")?) {\n'
-            "            return Err(__rxtpd_type_error(error));\n"
-            "        }\n"
+            "        __rxtpd_validate_" + validator_key + "(py, &target)?;\n"
             "    }\n"
         )
     return "".join(blocks)
+
+
+def _import_target_validator_key(impmod: str, attr: str) -> str:
+    """Map an ``import_from`` target to its frozen-authority validator key.
+
+    The mapping is derived from ``_AUTHORITY_META`` so an import target and the
+    canonical function it must equal cannot drift apart: every import target must
+    have a frozen authority (code digest + structural checks), never a weaker
+    metadata-only acceptance.
+    """
+    for key, meta in _AUTHORITY_META.items():
+        if meta["module"] == impmod and meta["qualname"] == attr:
+            return key
+    raise ValueError(f"no frozen authority validator for import target {impmod}.{attr}")
 
 
 def _validator_rs(key: str, error: dict[str, str]) -> str:
@@ -460,7 +502,13 @@ def _validator_rs(key: str, error: dict[str, str]) -> str:
 def _rust_method_validators(error: dict[str, str]) -> str:
     return "\n".join(
         _validator_rs(key, error)
-        for key in ("series_map", "series_to_numpy", "frame_apply", "frame_to_numpy")
+        for key in (
+            "series_map",
+            "series_to_numpy",
+            "frame_apply",
+            "frame_to_numpy",
+            "apply_frame_apply",
+        )
     )
 
 
@@ -505,6 +553,7 @@ def boundary_helpers() -> str:
     series_to_numpy_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["series_to_numpy"])
     frame_apply_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["frame_apply"])
     frame_to_numpy_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["frame_to_numpy"])
+    apply_frame_apply_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["apply_frame_apply"])
     identity_functions = _RUST_IDENTITY_FUNCTIONS
     method_validators = _rust_method_validators(error)
     version = _rust_string(PINNED_PANDAS_VERSION)
@@ -532,6 +581,7 @@ const __RXTPD_SERIES_MAP_DIGEST: &str = {series_map_digest};
 const __RXTPD_SERIES_TO_NUMPY_DIGEST: &str = {series_to_numpy_digest};
 const __RXTPD_FRAME_APPLY_DIGEST: &str = {frame_apply_digest};
 const __RXTPD_FRAME_TO_NUMPY_DIGEST: &str = {frame_to_numpy_digest};
+const __RXTPD_APPLY_FRAME_APPLY_DIGEST: &str = {apply_frame_apply_digest};
 
 {identity_functions}
 

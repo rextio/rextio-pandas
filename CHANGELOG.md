@@ -135,3 +135,25 @@
 - Replace the editable plugin path `startswith` check with resolved
   `Path.is_relative_to(checkout / "src")`, with a sibling-prefix (`src-evil`)
   negative test.
+
+### Third adversarial post-review follow-up
+
+- Bind `DataFrame.apply`'s `pandas.core.apply.frame_apply` import target to its
+  own independently frozen canonical authority instead of accepting it on
+  metadata alone. The previous import check accepted any exact `FunctionType`
+  whose `__module__`/`__qualname__` matched and whose `__globals__` reused
+  `pandas.core.apply.__dict__`, so a `types.FunctionType` replacement with those
+  matching attributes but an attacker-controlled code object was trusted. The
+  imported function is now validated exactly like the four bound methods: frozen
+  known-good code digest (type-tagged canonical encoding hashed with `sha2`; no
+  Python `repr`/`hashlib`), exact function type/module/qualname, empty closure
+  and zero freevars, `None` `__kwdefaults__`, structural `__defaults__`, and
+  identity checks for its own execution-relevant global bindings
+  (`FrameColumnApply`, `FrameRowApply`, `reconstruct_func`). The import-target
+  validator key is derived from the frozen authority metadata so a target and
+  its canonical authority cannot drift apart. Adds a real-Cargo regression that
+  installs a metadata-and-globals-matching forged `frame_apply` and asserts the
+  stable DataFrame `TypeError`, a unit test proving the forged code object
+  changes the digest, and re-derives the new digest and global spec from the
+  live pinned package so drift fails loudly. Preserves the prior custom-`repr`,
+  structural-default, sentinel, and mutable-binding regressions.

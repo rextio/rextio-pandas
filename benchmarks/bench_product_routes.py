@@ -131,15 +131,25 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _require_exact_native_artifact(installed_path: str, imported_file: str) -> Path:
-    """Bind the timed native module to the exact built artifact path."""
+def _require_bound_native_artifact(installed_path: str, imported_file: str) -> Path:
+    """Bind the timed native module to this build's exact artifact by bytes.
+
+    Core stages byte-identical copies of the compiled extension at both the
+    reported ``installed_path`` (``.rextio/generated/python``) and the import
+    tree (``.rextio/build/python``), so their paths are not equal. Requiring the
+    timed module to be byte-identical to the reported build artifact is stronger
+    than a path prefix: any different native file (stale, cached, or global) has
+    different bytes and is rejected.
+    """
     installed = Path(installed_path).resolve()
     imported = Path(imported_file).resolve()
+    _require(installed.exists(), f"reported native artifact missing: {installed}")
+    _require(imported.exists(), f"imported native module missing: {imported}")
     _require(
-        imported == installed,
-        f"imported native module {imported} is not the built artifact {installed}",
+        _sha256_file(imported) == _sha256_file(installed),
+        f"timed native module {imported} is not byte-identical to the build artifact {installed}",
     )
-    return installed
+    return imported
 
 
 def _counterbalanced_schedule(repetitions: int, rng: random.Random) -> list[list[str]]:
@@ -734,13 +744,18 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
             )
             native_module = sys.modules.get("_rextio_native")
             _require(native_module is not None, "native module was not imported")
-            bound_artifact = _require_exact_native_artifact(
-                native_build["installed_path"], native_module.__file__
+            imported_native = Path(native_module.__file__).resolve()
+            # Imported from the exact fresh build tree (not a cache/global), and
+            # byte-identical to the reported build artifact.
+            _require(
+                imported_native.parent == build_python_dir,
+                f"native module {imported_native} is not imported from {build_python_dir}",
             )
+            _require_bound_native_artifact(native_build["installed_path"], native_module.__file__)
             provenance["timing_imports"] = {
                 "kernels": str(Path(module.__file__).resolve()),
-                "native_module": str(Path(native_module.__file__).resolve()),
-                "native_artifact_bound": str(bound_artifact),
+                "native_module": str(imported_native),
+                "native_module_matches_build_artifact": True,
             }
             cells: list[dict[str, Any]] = []
             for route_index, route in enumerate(("series.map", "dataframe.apply")):

@@ -157,16 +157,18 @@ def test_sha256_file_changes_only_with_bytes(tmp_path: Path) -> None:
 def test_native_artifact_binding_rejects_a_different_file(tmp_path: Path) -> None:
     installed = tmp_path / "generated" / "_rextio_native.so"
     installed.parent.mkdir(parents=True)
-    installed.write_bytes(b"artifact")
-    sibling = tmp_path / "generated" / "_rextio_native_other.so"
-    sibling.write_bytes(b"artifact")  # same bytes, different path under same tree
-    # Exact-path binding: the genuine artifact passes.
-    assert (
-        bench._require_exact_native_artifact(str(installed), str(installed)) == installed.resolve()
-    )
-    # A different file beneath the same project root is rejected.
+    installed.write_bytes(b"the-real-artifact-bytes")
+    # The byte-identical copy staged in the build tree binds successfully.
+    imported = tmp_path / "build" / "_rextio_native.so"
+    imported.parent.mkdir(parents=True)
+    imported.write_bytes(b"the-real-artifact-bytes")
+    assert bench._require_bound_native_artifact(str(installed), str(imported)) == imported.resolve()
+    # A different native file beneath the same project root (different bytes) is
+    # rejected even though it sits under the tree.
+    stale = tmp_path / "build" / "_rextio_native_stale.so"
+    stale.write_bytes(b"a-different-stale-artifact")
     with pytest.raises(RuntimeError):
-        bench._require_exact_native_artifact(str(installed), str(sibling))
+        bench._require_bound_native_artifact(str(installed), str(stale))
 
 
 # --- G: fail-closed eligibility recomputed from the raw schedule ------------

@@ -26,6 +26,8 @@ pytestmark = [
 ]
 
 KERNELS = """
+from __future__ import annotations
+
 from rextio_pandas.types import DataFrameF64, SeriesF64
 
 

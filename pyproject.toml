@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rextio-pandas"
+dynamic = ["version"]
+description = "Private Rextio API 1.3 incubator for narrow pandas numeric routes."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  {name = "Steve Si-young Song", email = "rextio.co@gmail.com"},
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Private :: Do Not Upload",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = [
+  "rextio @ git+https://github.com/rextio/rextio.git@ac2b79d304f13abaaecaf7714f897574c3b6256f",
+  "pandas==2.3.3",
+  "numpy==2.3.5",
+]
+
+[project.entry-points."rextio.plugins"]
+rextio-pandas = "rextio_pandas.plugin:plugin"
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "check-wheel-contents>=0.6",
+  "mypy>=1.11",
+  "pytest>=8.0",
+  "ruff>=0.15",
+  "twine>=6.0",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "rextio_pandas.__about__.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests", "benchmarks"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "D", "B"]
+ignore = ["E501", "D105", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+"benchmarks/**" = ["D"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+

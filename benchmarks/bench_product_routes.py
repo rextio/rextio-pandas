@@ -614,7 +614,7 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
     target_ns = int(args.target_ms * 1_000_000)
     started = time.perf_counter_ns()
     with tempfile.TemporaryDirectory(prefix="rextio-pandas-bench-") as directory:
-        project_root = Path(directory)
+        project_root = Path(directory).resolve()
         _write_project(project_root)
         compile_started = time.perf_counter_ns()
         project = build_certification_project(project_root)

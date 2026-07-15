@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import TypedDict
 
 from rextio.plugins.api import CallableBodyExpr, CallableMeta, SchemaMeta
 
@@ -18,6 +19,48 @@ _RUST_SCALAR = {SERIES_F64: "f64", SERIES_I64: "i64"}
 PINNED_PANDAS_VERSION = "2.3.3"
 PINNED_NUMPY_VERSION = "2.3.5"
 PINNED_PYTHON = (3, 11)
+
+
+class _FrozenTypeShape(TypedDict):
+    qualname: str
+    flags_mask: int
+    flags: int
+    basicsize: int
+    itemsize: int
+    dictoffset: int
+    weakrefoffset: int
+
+
+class _CythonFunctionTypeAuthority(_FrozenTypeShape):
+    module: str
+    metatype: _FrozenTypeShape
+
+
+# Frozen CPython-visible structure of Cython 3.1.4's callable type. The live
+# module binding is still checked by exact identity, but these immutable type
+# fields prevent a coordinated replacement from supplying a Python class and
+# then validating an instance against that same mutable replacement.
+_CYTHON_FUNCTION_TYPE_AUTHORITY: _CythonFunctionTypeAuthority = {
+    "module": "_cython_3_1_4",
+    "qualname": "cython_function_or_method",
+    # Py_TPFLAGS_VALID_VERSION_TAG (bit 19) is a mutable CPython cache bit;
+    # exclude it while freezing every other low 32-bit structural flag.
+    "flags_mask": 4294443007,
+    "flags": 155392,
+    "basicsize": 176,
+    "itemsize": 0,
+    "dictoffset": 64,
+    "weakrefoffset": 40,
+    "metatype": {
+        "qualname": "_common_types_metatype",
+        "flags_mask": 4294443007,
+        "flags": 2147507072,
+        "basicsize": 904,
+        "itemsize": 40,
+        "dictoffset": 264,
+        "weakrefoffset": 368,
+    },
+}
 
 # The Rust-side SHA-256 of the canonical code encoding uses the ``sha2`` crate
 # already pinned (``sha2 = "0.10"``) in the core-generated Cargo manifest, so it
@@ -37,6 +80,13 @@ PINNED_PYTHON = (3, 11)
 # still match the pinned pandas.
 _AUTHORITY_CODE_DIGESTS = {
     "series_map": "4f755e3868aee6be8e0d29b39354354d8829da3c0a00c4c1bc48dab3e83f9c4d",
+    "series_map_values": "b8265ba6e7641007bf34d4a1bc005a687748b75d9c75e525244ae8e475124be2",
+    "series_algorithms_map_array": (
+        "e3d53c86735480faa62792dc2b7c375f55462360e4981295dbeeed347820e691"
+    ),
+    "series_lib_map_infer": "12bb606c8f6f3fe73f566bd28a6c75483e86e72ae6ec9bd93922bedbc6218ace",
+    "series_constructor_fget": ("06a862891fe5589f33a76a07ce2fdf79ae9e00d57b4345ec64ed0a2d81dfaa9f"),
+    "series_ndframe_finalize": ("4f7eca0c8a608086cc5729aa28b4976774c655ca8d4a49d54c41c7ccaa04b0b1"),
     "series_to_numpy": "1d2a907fafe5072adc69dde5099e4a83b48102e68e9d35e0aafbec8d16e70050",
     "frame_apply": "82441419a1a610c5b2e81af0c6978974682fb3116e8f10de5b9313641fec00d1",
     "frame_to_numpy": "ff8ef88dbed7a3c530f339452059b2aae33e65e73c3f58ae60f01c4469bb5e71",
@@ -46,8 +96,38 @@ _AUTHORITY_CODE_DIGESTS = {
     # live, mutable ``pandas.core.apply.frame_apply`` binding at lowering).
     "apply_frame_apply": "38fa716dab42aa69bddb5dfc11c58f9b7c5b64e8e2f97dd2a5f5630cbfb168c2",
 }
+# CPython optimization mode changes executable code only where the pinned
+# function contains removable assertions. Keep each supported mode bound to a
+# distinct frozen digest; never accept the optimized digest in normal mode.
+_AUTHORITY_OPTIMIZED_CODE_DIGESTS = {
+    "series_ndframe_finalize": {
+        1: "a2e90d16b2fede73b47f546d8213c73ce16e8b94234192e9887bb3f3a4f85ab3",
+    },
+}
 _AUTHORITY_META = {
     "series_map": {"module": "pandas.core.series", "qualname": "Series.map"},
+    "series_map_values": {
+        "module": "pandas.core.base",
+        "qualname": "IndexOpsMixin._map_values",
+    },
+    "series_algorithms_map_array": {
+        "module": "pandas.core.algorithms",
+        "qualname": "map_array",
+    },
+    "series_lib_map_infer": {
+        "module": "pandas._libs.lib",
+        "qualname": "map_infer",
+        "function_type_module": "_cython_3_1_4",
+        "function_type_qualname": "cython_function_or_method",
+    },
+    "series_constructor_fget": {
+        "module": "pandas.core.series",
+        "qualname": "Series._constructor",
+    },
+    "series_ndframe_finalize": {
+        "module": "pandas.core.generic",
+        "qualname": "NDFrame.__finalize__",
+    },
     "series_to_numpy": {"module": "pandas.core.base", "qualname": "IndexOpsMixin.to_numpy"},
     "frame_apply": {"module": "pandas.core.frame", "qualname": "DataFrame.apply"},
     "frame_to_numpy": {"module": "pandas.core.frame", "qualname": "DataFrame.to_numpy"},
@@ -57,6 +137,11 @@ _AUTHORITY_META = {
 # checks. ``no_default`` is the exact ``pandas._libs.lib.no_default`` singleton.
 _AUTHORITY_DEFAULTS = {
     "series_map": (("none",),),
+    "series_map_values": (("none",), ("bool", True)),
+    "series_algorithms_map_array": (("none",), ("bool", True)),
+    "series_lib_map_infer": (("bool", True), ("bool", False)),
+    "series_constructor_fget": None,
+    "series_ndframe_finalize": (("none",),),
     "series_to_numpy": (("none",), ("bool", False), ("no_default",)),
     "frame_apply": (
         ("int", 0),
@@ -88,6 +173,48 @@ _AUTHORITY_DEFAULTS = {
 # an unchecked global.
 _AUTHORITY_GLOBALS: dict[str, dict[str, tuple]] = {
     "series_map": {"builtins": (), "modules": (), "module_attrs": (), "import_from": ()},
+    "series_map_values": {
+        "builtins": ("isinstance",),
+        "modules": (("algorithms", "pandas.core.algorithms"),),
+        "module_attrs": (("ExtensionArray", "pandas.core.arrays.base", "ExtensionArray"),),
+        "import_from": (),
+    },
+    "series_algorithms_map_array": {
+        "builtins": ("ValueError", "isinstance", "dict", "hasattr", "len", "object"),
+        "modules": (("np", "numpy"), ("lib", "pandas._libs.lib")),
+        "module_attrs": (
+            ("is_dict_like", "pandas.core.dtypes.inference", "is_dict_like"),
+            ("ABCSeries", "pandas.core.dtypes.generic", "ABCSeries"),
+            ("take_nd", "pandas.core.array_algos.take", "take_nd"),
+            ("isna", "pandas.core.dtypes.missing", "isna"),
+        ),
+        # ``from pandas import Series`` is inside the dict-like-mapper branch.
+        # The claimed mapper is a plain callable, so this import is bytecode
+        # drift-accounted but deliberately outside the executed authority graph.
+        "unreachable_import_from": (("pandas", "Series"),),
+        "import_from": (),
+    },
+    "series_lib_map_infer": {
+        "builtins": (),
+        "modules": (),
+        "module_attrs": (),
+        "import_from": (),
+    },
+    "series_constructor_fget": {
+        "builtins": (),
+        "modules": (),
+        "module_attrs": (("Series", "pandas", "Series"),),
+        "import_from": (),
+    },
+    "series_ndframe_finalize": {
+        "builtins": ("isinstance", "set", "str", "object", "getattr", "all"),
+        "modules": (),
+        "module_attrs": (
+            ("NDFrame", "pandas.core.series", "NDFrame"),
+            ("deepcopy", "copy", "deepcopy"),
+        ),
+        "import_from": (),
+    },
     "series_to_numpy": {
         "builtins": ("isinstance", "next", "iter", "TypeError"),
         "modules": (("np", "numpy"), ("lib", "pandas._libs.lib")),
@@ -257,10 +384,11 @@ def compute_authority_code_digest(function: object) -> str:
     """Python mirror of the Rust canonical code digest (for capture + tests)."""
     import types
 
-    if not isinstance(function, types.FunctionType):
-        raise TypeError("pinned pandas descriptor is not a plain function")
+    code = getattr(function, "__code__", None)
+    if not isinstance(code, types.CodeType):
+        raise TypeError("pinned pandas callable does not expose an exact code object")
     out: list[bytes] = []
-    _encode_code(function.__code__, out)
+    _encode_code(code, out)
     return hashlib.sha256(b"".join(out)).hexdigest()
 
 
@@ -326,10 +454,18 @@ def compute_authority_class_digest(cls: object, spec: dict) -> str:
 
 _DIGEST_CONST = {
     "series_map": "__RXTPD_SERIES_MAP_DIGEST",
+    "series_map_values": "__RXTPD_SERIES_MAP_VALUES_DIGEST",
+    "series_algorithms_map_array": "__RXTPD_ALGORITHMS_MAP_ARRAY_DIGEST",
+    "series_lib_map_infer": "__RXTPD_LIB_MAP_INFER_DIGEST",
+    "series_constructor_fget": "__RXTPD_SERIES_CONSTRUCTOR_FGET_DIGEST",
+    "series_ndframe_finalize": "__RXTPD_NDFRAME_FINALIZE_DIGEST",
     "series_to_numpy": "__RXTPD_SERIES_TO_NUMPY_DIGEST",
     "frame_apply": "__RXTPD_FRAME_APPLY_DIGEST",
     "frame_to_numpy": "__RXTPD_FRAME_TO_NUMPY_DIGEST",
     "apply_frame_apply": "__RXTPD_APPLY_FRAME_APPLY_DIGEST",
+}
+_OPTIMIZED_DIGEST_CONST = {
+    ("series_ndframe_finalize", 1): "__RXTPD_NDFRAME_FINALIZE_OPTIMIZE_1_DIGEST",
 }
 
 # Fixed Rust helpers: type-tagged canonical encoding + pinned-crate SHA-256, all
@@ -509,7 +645,11 @@ def _default_item_rs(index: int, spec: tuple) -> str:
     if kind == "none":
         cond = "!item.is_none()"
     elif kind == "bool":
-        cond = "!item.is_exact_instance_of::<pyo3::types::PyBool>() || item.extract::<bool>()?"
+        expected = "true" if spec[1] else "false"
+        cond = (
+            "!item.is_exact_instance_of::<pyo3::types::PyBool>() "
+            "|| item.extract::<bool>()? != " + expected
+        )
     elif kind == "int":
         cond = (
             "!item.is_exact_instance_of::<pyo3::types::PyInt>() "
@@ -628,6 +768,107 @@ def _validator_rs(key: str, error: dict[str, str]) -> str:
     module = _rust_string(meta["module"])
     qualname = _rust_string(meta["qualname"])
     defaults = _AUTHORITY_DEFAULTS[key]
+    optimized_digests = _AUTHORITY_OPTIMIZED_CODE_DIGESTS.get(key)
+    if optimized_digests is None:
+        digest_check = (
+            "    if __rxtpd_code_digest(&code, error)? != " + digest_const + " {\n"
+            "        return Err(__rxtpd_type_error(error));\n    }\n"
+        )
+    else:
+        if set(optimized_digests) != {1}:
+            raise ValueError(f"unsupported optimization digest modes for {key}")
+        optimize_1_const = _OPTIMIZED_DIGEST_CONST[(key, 1)]
+        digest_check = (
+            '    let optimize: i64 = py.import("sys")?.getattr("flags")?'
+            '.getattr("optimize")?.extract()?;\n'
+            "    let expected_digest = match optimize {\n"
+            "        0 => " + digest_const + ",\n"
+            "        1 => " + optimize_1_const + ",\n"
+            "        _ => return Err(__rxtpd_type_error(error)),\n"
+            "    };\n"
+            "    if __rxtpd_code_digest(&code, error)? != expected_digest {\n"
+            "        return Err(__rxtpd_type_error(error));\n    }\n"
+        )
+    if "function_type_module" in meta:
+        type_authority = _CYTHON_FUNCTION_TYPE_AUTHORITY
+        if (
+            meta["function_type_module"] != type_authority["module"]
+            or meta["function_type_qualname"] != type_authority["qualname"]
+        ):
+            raise ValueError(f"unknown frozen callable type authority for {key}")
+        metatype_authority = type_authority["metatype"]
+        type_check = (
+            "    let function_type = py.import("
+            + _rust_string(type_authority["module"])
+            + ")?.getattr("
+            + _rust_string(type_authority["qualname"])
+            + ")?;\n"
+            '    let builtins = py.import("builtins")?;\n'
+            '    let exact_type = builtins.getattr("type")?;\n'
+            '    let object_type = builtins.getattr("object")?;\n'
+            "    let function_metatype = function_type.get_type();\n"
+            "    if !function_metatype.is_exact_instance(&exact_type)\n"
+            '        || function_metatype.getattr("__qualname__")?.extract::<String>()? != '
+            + _rust_string(metatype_authority["qualname"])
+            + '\n        || (function_metatype.getattr("__flags__")?.extract::<u64>()? & '
+            + str(metatype_authority["flags_mask"])
+            + ") != "
+            + str(metatype_authority["flags"])
+            + '\n        || function_metatype.getattr("__basicsize__")?.extract::<i64>()? != '
+            + str(metatype_authority["basicsize"])
+            + '\n        || function_metatype.getattr("__itemsize__")?.extract::<i64>()? != '
+            + str(metatype_authority["itemsize"])
+            + '\n        || function_metatype.getattr("__dictoffset__")?.extract::<i64>()? != '
+            + str(metatype_authority["dictoffset"])
+            + '\n        || function_metatype.getattr("__weakrefoffset__")?.extract::<i64>()? != '
+            + str(metatype_authority["weakrefoffset"])
+            + "\n    {\n"
+            "        return Err(__rxtpd_type_error(error));\n    }\n"
+            '    let function_metatype_mro = function_metatype.getattr("__mro__")?;\n'
+            "    let function_metatype_mro = function_metatype_mro\n"
+            "        .cast::<PyTuple>()\n"
+            "        .map_err(|_| __rxtpd_type_error(error))?;\n"
+            "    if function_metatype_mro.len() != 3\n"
+            "        || !function_metatype_mro.get_item(0)?.is(&function_metatype)\n"
+            "        || !function_metatype_mro.get_item(1)?.is(&exact_type)\n"
+            "        || !function_metatype_mro.get_item(2)?.is(&object_type)\n"
+            "    {\n"
+            "        return Err(__rxtpd_type_error(error));\n    }\n"
+            '    if function_type.getattr("__module__")?.extract::<String>()? != '
+            + _rust_string(type_authority["module"])
+            + '\n        || function_type.getattr("__qualname__")?.extract::<String>()? != '
+            + _rust_string(type_authority["qualname"])
+            + '\n        || (function_type.getattr("__flags__")?.extract::<u64>()? & '
+            + str(type_authority["flags_mask"])
+            + ") != "
+            + str(type_authority["flags"])
+            + '\n        || function_type.getattr("__basicsize__")?.extract::<i64>()? != '
+            + str(type_authority["basicsize"])
+            + '\n        || function_type.getattr("__itemsize__")?.extract::<i64>()? != '
+            + str(type_authority["itemsize"])
+            + '\n        || function_type.getattr("__dictoffset__")?.extract::<i64>()? != '
+            + str(type_authority["dictoffset"])
+            + '\n        || function_type.getattr("__weakrefoffset__")?.extract::<i64>()? != '
+            + str(type_authority["weakrefoffset"])
+            + "\n    {\n"
+            "        return Err(__rxtpd_type_error(error));\n    }\n"
+            '    let function_type_mro = function_type.getattr("__mro__")?;\n'
+            "    let function_type_mro = function_type_mro\n"
+            "        .cast::<PyTuple>()\n"
+            "        .map_err(|_| __rxtpd_type_error(error))?;\n"
+            "    if function_type_mro.len() != 2\n"
+            "        || !function_type_mro.get_item(0)?.is(&function_type)\n"
+            "        || !function_type_mro.get_item(1)?.is(&object_type)\n"
+            "        || !descriptor.is_exact_instance(&function_type)\n"
+            "    {\n"
+            "        return Err(__rxtpd_type_error(error));\n    }\n"
+        )
+    else:
+        type_check = (
+            '    let types_module = py.import("types")?;\n'
+            '    if !descriptor.is_exact_instance(&types_module.getattr("FunctionType")?) {\n'
+            "        return Err(__rxtpd_type_error(error));\n    }\n"
+        )
     parts = [
         "fn __rxtpd_validate_" + key + "(\n",
         "    py: pyo3::Python<'_>,\n",
@@ -635,9 +876,7 @@ def _validator_rs(key: str, error: dict[str, str]) -> str:
         ") -> pyo3::PyResult<()> {\n",
         "    use pyo3::types::{PyAnyMethods, PyTuple, PyTupleMethods};\n",
         "    let error = " + err + ";\n",
-        '    let types_module = py.import("types")?;\n',
-        '    if !descriptor.is_exact_instance(&types_module.getattr("FunctionType")?) {\n',
-        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        type_check,
         "    let module = py.import(" + module + ")?;\n",
         '    if descriptor.getattr("__module__")?.extract::<String>()? != ' + module + " {\n",
         "        return Err(__rxtpd_type_error(error));\n    }\n",
@@ -651,19 +890,31 @@ def _validator_rs(key: str, error: dict[str, str]) -> str:
         '    let code = descriptor.getattr("__code__")?;\n',
         '    if code.getattr("co_freevars")?.len()? != 0 {\n',
         "        return Err(__rxtpd_type_error(error));\n    }\n",
-        "    if __rxtpd_code_digest(&code, error)? != " + digest_const + " {\n",
-        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        digest_check,
         '    if !descriptor.getattr("__kwdefaults__")?.is_none() {\n',
         "        return Err(__rxtpd_type_error(error));\n    }\n",
-        '    let defaults = descriptor.getattr("__defaults__")?;\n',
-        "    if !defaults.is_exact_instance_of::<PyTuple>() {\n",
-        "        return Err(__rxtpd_type_error(error));\n    }\n",
-        "    let defaults = defaults.cast::<PyTuple>().map_err(|_| __rxtpd_type_error(error))?;\n",
-        "    if defaults.len() != " + str(len(defaults)) + " {\n",
-        "        return Err(__rxtpd_type_error(error));\n    }\n",
     ]
-    for index, spec in enumerate(defaults):
-        parts.append(_default_item_rs(index, spec))
+    if defaults is None:
+        parts.extend(
+            [
+                '    if !descriptor.getattr("__defaults__")?.is_none() {\n',
+                "        return Err(__rxtpd_type_error(error));\n    }\n",
+            ]
+        )
+    else:
+        parts.extend(
+            [
+                '    let defaults = descriptor.getattr("__defaults__")?;\n',
+                "    if !defaults.is_exact_instance_of::<PyTuple>() {\n",
+                "        return Err(__rxtpd_type_error(error));\n    }\n",
+                "    let defaults = defaults.cast::<PyTuple>()"
+                ".map_err(|_| __rxtpd_type_error(error))?;\n",
+                "    if defaults.len() != " + str(len(defaults)) + " {\n",
+                "        return Err(__rxtpd_type_error(error));\n    }\n",
+            ]
+        )
+        for index, spec in enumerate(defaults):
+            parts.append(_default_item_rs(index, spec))
     parts.append(_globals_rs(_AUTHORITY_GLOBALS[key]))
     parts.append("    Ok(())\n}\n")
     return "".join(parts)
@@ -674,6 +925,11 @@ def _rust_method_validators(error: dict[str, str]) -> str:
         _validator_rs(key, error)
         for key in (
             "series_map",
+            "series_map_values",
+            "series_algorithms_map_array",
+            "series_lib_map_infer",
+            "series_constructor_fget",
+            "series_ndframe_finalize",
             "series_to_numpy",
             "frame_apply",
             "frame_to_numpy",
@@ -887,6 +1143,18 @@ def boundary_helpers() -> str:
     """Return shared one-shot validation/extraction/materialization helpers."""
     error = {name: _rust_string(message) for name, message in RUNTIME_ERRORS.items()}
     series_map_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["series_map"])
+    series_map_values_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["series_map_values"])
+    algorithms_map_array_digest = _rust_string(
+        _AUTHORITY_CODE_DIGESTS["series_algorithms_map_array"]
+    )
+    lib_map_infer_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["series_lib_map_infer"])
+    series_constructor_fget_digest = _rust_string(
+        _AUTHORITY_CODE_DIGESTS["series_constructor_fget"]
+    )
+    ndframe_finalize_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["series_ndframe_finalize"])
+    ndframe_finalize_optimize_1_digest = _rust_string(
+        _AUTHORITY_OPTIMIZED_CODE_DIGESTS["series_ndframe_finalize"][1]
+    )
     series_to_numpy_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["series_to_numpy"])
     frame_apply_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["frame_apply"])
     frame_to_numpy_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["frame_to_numpy"])
@@ -902,12 +1170,12 @@ def boundary_helpers() -> str:
     py_major, py_minor = PINNED_PYTHON
     return f"""struct RxtPandasSeriesF64 {{
     values: numpy::ndarray::Array1<f64>,
-    name: pyo3::Py<pyo3::PyAny>,
+    source: Option<pyo3::Py<pyo3::PyAny>>,
 }}
 
 struct RxtPandasSeriesI64 {{
     values: numpy::ndarray::Array1<i64>,
-    name: pyo3::Py<pyo3::PyAny>,
+    source: Option<pyo3::Py<pyo3::PyAny>>,
 }}
 
 struct RxtPandasFrameF64 {{
@@ -919,6 +1187,12 @@ struct RxtPandasFrameF64 {{
 // code encoding (CPython 3.11 / pandas 2.3.3 / numpy 2.3.5). Immutable
 // constants, never regenerated from a live descriptor.
 const __RXTPD_SERIES_MAP_DIGEST: &str = {series_map_digest};
+const __RXTPD_SERIES_MAP_VALUES_DIGEST: &str = {series_map_values_digest};
+const __RXTPD_ALGORITHMS_MAP_ARRAY_DIGEST: &str = {algorithms_map_array_digest};
+const __RXTPD_LIB_MAP_INFER_DIGEST: &str = {lib_map_infer_digest};
+const __RXTPD_SERIES_CONSTRUCTOR_FGET_DIGEST: &str = {series_constructor_fget_digest};
+const __RXTPD_NDFRAME_FINALIZE_DIGEST: &str = {ndframe_finalize_digest};
+const __RXTPD_NDFRAME_FINALIZE_OPTIMIZE_1_DIGEST: &str = {ndframe_finalize_optimize_1_digest};
 const __RXTPD_SERIES_TO_NUMPY_DIGEST: &str = {series_to_numpy_digest};
 const __RXTPD_FRAME_APPLY_DIGEST: &str = {frame_apply_digest};
 const __RXTPD_FRAME_TO_NUMPY_DIGEST: &str = {frame_to_numpy_digest};
@@ -980,13 +1254,60 @@ fn __rxtpd_pinned_series_class<'py>(
     let map_attribute = series_class
         .getattr("map")
         .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    let map_values_owner = py.import("pandas.core.base")?.getattr("IndexOpsMixin")?;
+    let map_values_descriptor = map_values_owner
+        .getattr("__dict__")?
+        .get_item("_map_values")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    let map_values_attribute = series_class
+        .getattr("_map_values")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    let algorithms_map_array = py
+        .import("pandas.core.algorithms")?
+        .getattr("map_array")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    let lib_map_infer = py
+        .import("pandas._libs.lib")?
+        .getattr("map_infer")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    let constructor_property = class_dict
+        .get_item("_constructor")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    let property_type = py.import("builtins")?.getattr("property")?;
+    if !constructor_property.is_exact_instance(&property_type)
+        || !constructor_property.getattr("fset")?.is_none()
+        || !constructor_property.getattr("fdel")?.is_none()
+    {{
+        return Err(__rxtpd_type_error({error["series_method"]}));
+    }}
+    let constructor_fget = constructor_property
+        .getattr("fget")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    let finalize_owner = py.import("pandas.core.generic")?.getattr("NDFrame")?;
+    let finalize_descriptor = finalize_owner
+        .getattr("__dict__")?
+        .get_item("__finalize__")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    let finalize_attribute = series_class
+        .getattr("__finalize__")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
     let to_numpy_attribute = series_class
         .getattr("to_numpy")
         .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
-    if !map_descriptor.is(&map_attribute) {{
+    if !map_descriptor.is(&map_attribute)
+        || class_dict.contains("_map_values")?
+        || !map_values_descriptor.is(&map_values_attribute)
+        || class_dict.contains("__finalize__")?
+        || !finalize_descriptor.is(&finalize_attribute)
+    {{
         return Err(__rxtpd_type_error({error["series_method"]}));
     }}
     __rxtpd_validate_series_map(py, &map_descriptor)?;
+    __rxtpd_validate_series_map_values(py, &map_values_descriptor)?;
+    __rxtpd_validate_series_algorithms_map_array(py, &algorithms_map_array)?;
+    __rxtpd_validate_series_lib_map_infer(py, &lib_map_infer)?;
+    __rxtpd_validate_series_constructor_fget(py, &constructor_fget)?;
+    __rxtpd_validate_series_ndframe_finalize(py, &finalize_descriptor)?;
     __rxtpd_validate_series_to_numpy(py, &to_numpy_attribute)?;
     Ok(series_class)
 }}
@@ -1043,7 +1364,10 @@ fn __rxtpd_series_parts<'py>(
         return Err(__rxtpd_type_error({error["series_class"]}));
     }}
     let instance_dict = value.getattr("__dict__")?;
-    if instance_dict.contains("map")? || instance_dict.contains("to_numpy")? {{
+    if instance_dict.contains("map")?
+        || instance_dict.contains("_map_values")?
+        || instance_dict.contains("to_numpy")?
+    {{
         return Err(__rxtpd_type_error({error["series_method"]}));
     }}
     let length = value.len()?;
@@ -1089,7 +1413,7 @@ fn __rxtpd_series_parts<'py>(
     let kwargs = PyDict::new(py);
     kwargs.set_item("copy", false)?;
     let array = to_numpy.call((value,), Some(&kwargs))?;
-    Ok((name.unbind(), array))
+    Ok((value.clone().unbind(), array))
 }}
 
 fn __rxtpd_extract_series_f64<'py>(
@@ -1097,12 +1421,15 @@ fn __rxtpd_extract_series_f64<'py>(
     value: &pyo3::Bound<'py, pyo3::PyAny>,
 ) -> pyo3::PyResult<RxtPandasSeriesF64> {{
     use numpy::PyArrayMethods;
-    let (name, array) = __rxtpd_series_parts(py, value, "float64", {error["series_f64"]})?;
+    let (source, array) = __rxtpd_series_parts(py, value, "float64", {error["series_f64"]})?;
     let typed = array
         .cast::<numpy::PyArray1<f64>>()
         .map_err(|_| __rxtpd_type_error({error["series_f64"]}))?;
     let values = typed.readonly().as_array().to_owned();
-    Ok(RxtPandasSeriesF64 {{ values, name }})
+    Ok(RxtPandasSeriesF64 {{
+        values,
+        source: Some(source),
+    }})
 }}
 
 fn __rxtpd_extract_series_i64<'py>(
@@ -1110,12 +1437,15 @@ fn __rxtpd_extract_series_i64<'py>(
     value: &pyo3::Bound<'py, pyo3::PyAny>,
 ) -> pyo3::PyResult<RxtPandasSeriesI64> {{
     use numpy::PyArrayMethods;
-    let (name, array) = __rxtpd_series_parts(py, value, "int64", {error["series_i64"]})?;
+    let (source, array) = __rxtpd_series_parts(py, value, "int64", {error["series_i64"]})?;
     let typed = array
         .cast::<numpy::PyArray1<i64>>()
         .map_err(|_| __rxtpd_type_error({error["series_i64"]}))?;
     let values = typed.readonly().as_array().to_owned();
-    Ok(RxtPandasSeriesI64 {{ values, name }})
+    Ok(RxtPandasSeriesI64 {{
+        values,
+        source: Some(source),
+    }})
 }}
 
 fn __rxtpd_extract_frame_f64<'py>(
@@ -1207,20 +1537,29 @@ fn __rxtpd_extract_frame_f64<'py>(
 
 trait RxtPandasMaterializedSeries {{
     type Elem: numpy::Element;
-    fn into_parts(self) -> (numpy::ndarray::Array1<Self::Elem>, pyo3::Py<pyo3::PyAny>);
+    fn into_parts(
+        self,
+    ) -> (
+        numpy::ndarray::Array1<Self::Elem>,
+        Option<pyo3::Py<pyo3::PyAny>>,
+    );
 }}
 
 impl RxtPandasMaterializedSeries for RxtPandasSeriesF64 {{
     type Elem = f64;
-    fn into_parts(self) -> (numpy::ndarray::Array1<f64>, pyo3::Py<pyo3::PyAny>) {{
-        (self.values, self.name)
+    fn into_parts(
+        self,
+    ) -> (numpy::ndarray::Array1<f64>, Option<pyo3::Py<pyo3::PyAny>>) {{
+        (self.values, self.source)
     }}
 }}
 
 impl RxtPandasMaterializedSeries for RxtPandasSeriesI64 {{
     type Elem = i64;
-    fn into_parts(self) -> (numpy::ndarray::Array1<i64>, pyo3::Py<pyo3::PyAny>) {{
-        (self.values, self.name)
+    fn into_parts(
+        self,
+    ) -> (numpy::ndarray::Array1<i64>, Option<pyo3::Py<pyo3::PyAny>>) {{
+        (self.values, self.source)
     }}
 }}
 
@@ -1233,12 +1572,23 @@ where
 {{
     use numpy::ToPyArray;
     use pyo3::types::{{PyAnyMethods, PyDict, PyDictMethods}};
-    let (values, name) = value.into_parts();
-    let series_class = __rxtpd_pinned_series_class(py)?;
+    let (values, source) = value.into_parts();
     let array = values.to_pyarray(py);
+    let Some(source) = source else {{
+        let series_class = __rxtpd_pinned_series_class(py)?;
+        return series_class.call1((array,));
+    }};
+    let source = source.bind(py);
+    let constructor = source.getattr("_constructor")?;
     let kwargs = PyDict::new(py);
-    kwargs.set_item("name", name.bind(py))?;
-    series_class.call((array,), Some(&kwargs))
+    kwargs.set_item("index", source.getattr("index")?)?;
+    kwargs.set_item("copy", false)?;
+    let result = constructor.call((array,), Some(&kwargs))?;
+    let finalize_kwargs = PyDict::new(py);
+    finalize_kwargs.set_item("method", "map")?;
+    result
+        .getattr("__finalize__")?
+        .call((source,), Some(&finalize_kwargs))
 }}
 
 fn __rxtpd_materialize_frame_f64<'py>(
@@ -1342,9 +1692,9 @@ def series_map_helpers(
     py: pyo3::Python<'py>,
     input: &{input_struct},
 ) -> pyo3::PyResult<{output_struct}> {{
-    let name = input.name.clone_ref(py);
+    let source = input.source.as_ref().map(|source| source.clone_ref(py));
     let values = py.detach(|| {hot_name}(&input.values));
-    Ok({output_struct} {{ values, name }})
+    Ok({output_struct} {{ values, source }})
 }}"""
     return wrapper_name, (hot, wrapper)
 
@@ -1434,7 +1784,7 @@ def prototype_dataframe_apply_helpers(
     let values = py.detach(|| {hot_name}(&input.values));
     Ok(RxtPandasSeriesF64 {{
         values,
-        name: py.None(),
+        source: None,
     }})
 }}"""
     return wrapper_name, (hot, wrapper)

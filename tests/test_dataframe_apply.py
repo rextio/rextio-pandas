@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,6 +35,8 @@ from rextio_pandas.rust_snippets.map_apply import (
     _AUTHORITY_CODE_DIGESTS,
     _AUTHORITY_DEFAULTS,
     _AUTHORITY_GLOBALS,
+    _AUTHORITY_OPTIMIZED_CODE_DIGESTS,
+    _CYTHON_FUNCTION_TYPE_AUTHORITY,
     _rust_string,
     boundary_helpers,
     compute_authority_class_digest,
@@ -432,10 +436,19 @@ def test_metadata_and_globals_matching_frame_apply_replacement_is_caught_by_dige
 
 def _live_authority_functions() -> dict[str, object]:
     import pandas as pd
+    import pandas._libs.lib as lib
+    import pandas.core.algorithms as algorithms
     import pandas.core.apply as apply_mod
+    import pandas.core.base as base
+    import pandas.core.generic as generic
 
     return {
         "series_map": pd.Series.__dict__["map"],
+        "series_map_values": base.IndexOpsMixin.__dict__["_map_values"],
+        "series_algorithms_map_array": algorithms.map_array,
+        "series_lib_map_infer": lib.map_infer,
+        "series_constructor_fget": pd.Series.__dict__["_constructor"].fget,
+        "series_ndframe_finalize": generic.NDFrame.__dict__["__finalize__"],
         "series_to_numpy": pd.Series.to_numpy,
         "frame_apply": pd.DataFrame.__dict__["apply"],
         "frame_to_numpy": pd.DataFrame.__dict__["to_numpy"],
@@ -452,6 +465,54 @@ def test_authority_code_digests_match_pinned_pandas() -> None:
     assert set(live) == set(_AUTHORITY_CODE_DIGESTS)
     for key, function in live.items():
         assert compute_authority_code_digest(function) == _AUTHORITY_CODE_DIGESTS[key]
+
+
+def test_optimized_finalize_digest_matches_pinned_pandas() -> None:
+    script = """
+import pandas.core.generic as generic
+from rextio_pandas.rust_snippets.map_apply import compute_authority_code_digest
+print(compute_authority_code_digest(generic.NDFrame.__dict__["__finalize__"]))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-O", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert (
+        completed.stdout.strip() == _AUTHORITY_OPTIMIZED_CODE_DIGESTS["series_ndframe_finalize"][1]
+    )
+
+
+def test_authority_default_specs_match_pinned_pandas() -> None:
+    import pandas._libs.lib as lib
+
+    live = _live_authority_functions()
+    assert set(live) == set(_AUTHORITY_DEFAULTS)
+    for key, function in live.items():
+        defaults = function.__defaults__
+        specs = _AUTHORITY_DEFAULTS[key]
+        if specs is None:
+            assert defaults is None, key
+            continue
+        assert type(defaults) is tuple and len(defaults) == len(specs), key
+        for value, spec in zip(defaults, specs, strict=True):
+            kind = spec[0]
+            if kind == "none":
+                assert value is None, key
+            elif kind == "bool":
+                assert type(value) is bool and value is spec[1], key
+            elif kind == "int":
+                assert type(value) is int and value == spec[1], key
+            elif kind == "str":
+                assert type(value) is str and value == spec[1], key
+            elif kind == "empty_tuple":
+                assert type(value) is tuple and value == (), key
+            elif kind == "no_default":
+                assert value is lib.no_default, key
+            else:  # pragma: no cover - frozen spec vocabulary
+                raise AssertionError((key, spec))
 
 
 def test_custom_repr_default_does_not_forge_the_code_digest() -> None:
@@ -504,7 +565,95 @@ def test_global_binding_specs_match_live_bytecode() -> None:
         imports = [
             ins.argval for ins in dis.get_instructions(function) if ins.opname == "IMPORT_NAME"
         ]
-        assert imports == [mod for mod, _ in spec["import_from"]], key
+        covered_imports = [mod for mod, _ in spec["import_from"]] + [
+            mod for mod, _ in spec.get("unreachable_import_from", ())
+        ]
+        assert imports == covered_imports, key
+
+
+def test_series_map_dynamic_authorities_are_frozen_and_checked_live() -> None:
+    source = boundary_helpers()
+
+    for key in (
+        "series_map_values",
+        "series_algorithms_map_array",
+        "series_lib_map_infer",
+        "series_constructor_fget",
+        "series_ndframe_finalize",
+    ):
+        assert f'"{_AUTHORITY_CODE_DIGESTS[key]}"' in source
+
+    for validator in (
+        "__rxtpd_validate_series_map_values",
+        "__rxtpd_validate_series_algorithms_map_array",
+        "__rxtpd_validate_series_lib_map_infer",
+        "__rxtpd_validate_series_constructor_fget",
+        "__rxtpd_validate_series_ndframe_finalize",
+    ):
+        assert f"fn {validator}(" in source
+        assert f"{validator}(py, &" in source
+
+    assert 'get_item("_map_values")' in source
+    assert 'class_dict.contains("_map_values")?' in source
+    assert 'instance_dict.contains("_map_values")?' in source
+    assert 'get_item("_constructor")' in source
+    assert "constructor_property.is_exact_instance(&property_type)" in source
+    assert 'constructor_property.getattr("fset")?.is_none()' in source
+    assert 'constructor_property.getattr("fdel")?.is_none()' in source
+    assert 'constructor_property\n        .getattr("fget")' in source
+    assert 'get_item("__finalize__")' in source
+    assert 'class_dict.contains("__finalize__")?' in source
+
+    # ``map_array`` and the Cython ``map_infer`` member are validated by frozen
+    # executable fingerprints, never by comparing a mutable module member back
+    # to a second lookup of the same member.
+    assert 'getattr("map_array")' in source
+    assert 'getattr("map_infer")' in source
+    assert "!= __RXTPD_ALGORITHMS_MAP_ARRAY_DIGEST" in source
+    assert "!= __RXTPD_LIB_MAP_INFER_DIGEST" in source
+    assert '"_cython_3_1_4"' in source
+    assert '"cython_function_or_method"' in source
+    assert "descriptor.is_exact_instance(&function_type)" in source
+    for field in (
+        "__flags__",
+        "__basicsize__",
+        "__itemsize__",
+        "__dictoffset__",
+        "__weakrefoffset__",
+        "__mro__",
+    ):
+        assert f'getattr("{field}")' in source
+
+    optimized_digest = _AUTHORITY_OPTIMIZED_CODE_DIGESTS["series_ndframe_finalize"][1]
+    assert f'"{optimized_digest}"' in source
+    assert 'getattr("optimize")?.extract()?' in source
+    assert "0 => __RXTPD_NDFRAME_FINALIZE_DIGEST" in source
+    assert "1 => __RXTPD_NDFRAME_FINALIZE_OPTIMIZE_1_DIGEST" in source
+    assert "_ => return Err(__rxtpd_type_error(error))" in source
+
+
+def test_cython_function_type_authority_matches_pinned_runtime() -> None:
+    import pandas._libs.lib as lib
+
+    function_type = type(lib.map_infer)
+    authority = _CYTHON_FUNCTION_TYPE_AUTHORITY
+    function_metatype = type(function_type)
+    assert type(function_metatype) is type
+    metatype_authority = authority["metatype"]
+    assert function_metatype.__qualname__ == metatype_authority["qualname"]
+    assert (
+        function_metatype.__flags__ & metatype_authority["flags_mask"]
+        == metatype_authority["flags"]
+    )
+    for field in ("basicsize", "itemsize", "dictoffset", "weakrefoffset"):
+        assert getattr(function_metatype, f"__{field}__") == metatype_authority[field]
+    assert function_metatype.__mro__ == (function_metatype, type, object)
+    assert function_type.__module__ == authority["module"]
+    assert function_type.__qualname__ == authority["qualname"]
+    assert function_type.__flags__ & authority["flags_mask"] == authority["flags"]
+    for field in ("basicsize", "itemsize", "dictoffset", "weakrefoffset"):
+        assert getattr(function_type, f"__{field}__") == authority[field]
+    assert function_type.__mro__ == (function_type, object)
 
 
 def _live_apply_module_authorities() -> dict[str, object]:

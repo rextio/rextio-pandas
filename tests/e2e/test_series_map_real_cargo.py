@@ -60,12 +60,20 @@ def map_i64_to_f64(series: SeriesI64) -> SeriesF64:
     return series.map(classify_i64)
 
 
-def signature_probe(series: SeriesF64) -> float:
+def parameter_signature_probe(series: SeriesF64) -> float:
     return 1.0
 
 
-def signature_roundtrip(series: SeriesF64) -> SeriesF64:
+def identity_map_roundtrip(series: SeriesF64) -> SeriesF64:
     return series.map(identity_f64)
+"""
+
+CLAIMLESS_KERNELS = """
+from rextio_pandas.types import SeriesF64
+
+
+def inspect_series(series: SeriesF64) -> float:
+    return 1.0
 """
 
 
@@ -80,6 +88,21 @@ def project(tmp_path_factory: pytest.TempPathFactory) -> CertifiedProject:
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "kernels.py").write_text(KERNELS, encoding="utf-8")
+    return build_certification_project(root)
+
+
+@pytest.fixture(scope="module")
+def claimless_project(tmp_path_factory: pytest.TempPathFactory) -> CertifiedProject:
+    """Build a project whose only plugin involvement is a parameter type."""
+    root = tmp_path_factory.mktemp("pandas_series_claimless_signature")
+    (root / "rextio.toml").write_text(
+        '[rust]\nbuild_tool = "cargo"\n\n[plugins]\nenabled = ["rextio-pandas"]\n',
+        encoding="utf-8",
+    )
+    package = root / "src" / "pandas_claimless"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "kernels.py").write_text(CLAIMLESS_KERNELS, encoding="utf-8")
     return build_certification_project(root)
 
 
@@ -114,13 +137,14 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
         "map_f64_identity",
         "map_i64",
         "map_i64_to_f64",
-        "signature_probe",
-        "signature_roundtrip",
+        "parameter_signature_probe",
+        "identity_map_roundtrip",
     ):
         record = functions[f"pandas_app.kernels.{name}"]
         assert record["native_status"] == "accepted"
         assert record["route"] == "native-plugin:rextio-pandas"
-    assert functions["pandas_app.kernels.signature_probe"]["plugin_claims"] == []
+    assert functions["pandas_app.kernels.parameter_signature_probe"]["plugin_claims"] == []
+    assert functions["pandas_app.kernels.identity_map_roundtrip"]["plugin_claims"]
 
     rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
         encoding="utf-8"
@@ -137,15 +161,15 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
         assert ".call" not in hot
 
 
-def test_claimless_signature_and_series_roundtrip_use_real_boundary_support(
+def test_parameter_probe_and_identity_map_product_use_real_boundary_support(
     project: CertifiedProject,
 ) -> None:
     source = pd.Series([-0.0, 1.5], dtype="float64", name="signature")
-    probe = project.equivalence_checker("pandas_app.kernels.signature_probe")
+    probe = project.equivalence_checker("pandas_app.kernels.parameter_signature_probe")
     assert probe(source) == 1.0
 
     roundtrip = project.equivalence_checker(
-        "pandas_app.kernels.signature_roundtrip",
+        "pandas_app.kernels.identity_map_roundtrip",
         equals=_series_equal,
     )
     result = roundtrip(source)
@@ -234,6 +258,65 @@ def _run_fresh(project: CertifiedProject, mode: str, body: str) -> subprocess.Co
         text=True,
         check=False,
     )
+
+
+def test_claimless_only_parameter_signature_builds_and_executes_boundary_support(
+    claimless_project: CertifiedProject,
+) -> None:
+    reports = claimless_project.project_root / ".rextio" / "reports"
+    check = json.loads((reports / "check.json").read_text(encoding="utf-8"))
+    functions = {
+        function["qualname"]: function
+        for module in check["modules"]
+        for function in module["functions"]
+    }
+    assert set(functions) == {"pandas_claimless.kernels.inspect_series"}
+    record = functions["pandas_claimless.kernels.inspect_series"]
+    assert record["native_status"] == "accepted"
+    assert record["route"] == "native-plugin:rextio-pandas"
+    assert record["plugin_claims"] == []
+
+    build = json.loads((reports / "build.json").read_text(encoding="utf-8"))
+    assert build["status"] == "built"
+    assert build["accepted_native_count"] == 1
+
+    rust = (
+        claimless_project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs"
+    ).read_text(encoding="utf-8")
+    assert rust.count("struct RxtPandasSeriesF64") == 1
+    assert rust.count("fn __rxtpd_extract_series_f64") == 1
+    assert "let series = __rxtpd_extract_series_f64(py, &series)?;" in rust
+    assert "fn __rxtpd_map_values_" not in rust
+
+    valid = _run_fresh(
+        claimless_project,
+        "native",
+        """
+import pandas as pd
+from pandas_claimless.kernels import inspect_series
+print(inspect_series(pd.Series([1.0], dtype="float64")))
+""",
+    )
+    assert valid.returncode == 0, valid.stderr
+    assert valid.stdout.strip() == "1.0"
+
+    rejected = _run_fresh(
+        claimless_project,
+        "native",
+        """
+import pandas as pd
+from pandas_claimless.kernels import inspect_series
+try:
+    inspect_series(pd.Series([], dtype="float64"))
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("expected contract error")
+""",
+    )
+    assert rejected.returncode == 0, rejected.stderr
+    assert rejected.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_empty"]]
 
 
 def test_native_and_fallback_run_in_fresh_processes(project: CertifiedProject) -> None:

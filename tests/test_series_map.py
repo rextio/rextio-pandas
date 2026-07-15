@@ -298,7 +298,14 @@ def inspect(series: SeriesF64) -> float:
 
 
 def test_return_only_signature_source_collects_boundary_support() -> None:
-    """Exercise return-position collection independently of a parameter."""
+    """Exercise return-position collection independently at source generation.
+
+    Core intentionally rejects an ordinary claimless materialized alias return
+    and claimless calls of materialized plugin functions (RXT092). Runtime
+    Series return materialization is therefore covered by the identity-map
+    product regression; this IR probe isolates return-position helper
+    collection without bypassing either core guard.
+    """
     registry = pandas_registry()
     _maps, _providers, types_by_key = _plugin_lowering_inputs(
         SimpleNamespace(plugins=registry)  # type: ignore[arg-type]

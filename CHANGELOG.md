@@ -9,12 +9,20 @@
 - Make `Series.map` the sole supported/GO route. Both registered materialized
   Series types now own the shared boundary support through API 1.3
   `PluginType.helpers`, so claimless parameter signatures and return-position
-  source generation resolve their Rust types/extractors/materializers. Exact
-  text remains deduplicated when a map claim contributes the same helper.
+  source generation resolve their Rust types/extractors/materializers. A
+  claimless-only real-Cargo fixture covers parameter extraction and rejection;
+  return-only collection remains a source-generation test because core's
+  alias-divergence/RXT092 guards intentionally forbid a claimless materialized
+  round trip. Runtime return materialization is covered by an identity
+  `Series.map` product claim. Exact text remains deduplicated when a map claim
+  contributes the same helper.
 - De-promote `DataFrame.apply(axis=1)` to a private prototype/NO-GO. Remove it
   from coverage, the registered type vocabulary, normal claim/lower dispatch,
   native rule records, product-route Cargo assertions, and every authoritative
   benchmark cell/headline/break-even. Check/build retains ordinary fallback.
+  Shared boundary text may still emit unused prototype frame definitions, but
+  no DataFrame apply hot loop/product route is registered, claimed, lowered, or
+  benchmarked.
 - Record the decisive authority bypass: a same-module/same-qualname
   `FrameColumnApply` can copy every member in the frozen class digest yet add an
   unchecked `apply()` that changes pandas results from `[11.0, 22.0]` to

@@ -10,8 +10,9 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         constraint=(
             "Research code characterized a homogeneous-float64 row loop, but the complete "
             "pandas executable authority behind DataFrame.apply cannot be bounded by the "
-            "frozen partial class/global digest. The native route/type is not registered, claimed, "
-            "lowered, built, benchmarked, or headline-eligible."
+            "frozen partial class/global digest. No DataFrame apply product route or hot loop is "
+            "registered, claimed, lowered, benchmarked, or headline-eligible. Shared Series "
+            "boundary support may still emit unused prototype frame definitions."
         ),
         outcome="fallback",
         diagnostic_code=None,

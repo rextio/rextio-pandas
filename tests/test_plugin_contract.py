@@ -14,6 +14,7 @@ import rextio
 from rextio.plugins.api import PLUGIN_API_VERSION, BoundaryConversion
 
 import rextio_pandas
+import rextio_pandas.rust_snippets as rust_snippets
 from rextio_pandas.plugin import CORE_COMMIT, RextioPandasPlugin
 from rextio_pandas.plugin_types import PLUGIN_TYPES
 from rextio_pandas.rust_snippets.map_apply import boundary_helpers
@@ -194,7 +195,10 @@ def test_public_authority_exposes_series_map_and_apply_no_go_only() -> None:
     assert apply_no_go.id == "rextio-pandas/dataframe-apply-prototype-no-go"
     assert apply_no_go.outcome == "fallback"
     assert apply_no_go.verified is False
-    assert "not registered, claimed, lowered, built, benchmarked" in apply_no_go.constraint
+    assert "No DataFrame apply product route or hot loop" in apply_no_go.constraint
+    assert "unused prototype frame definitions" in apply_no_go.constraint
+    assert "prototype_dataframe_apply_helpers" not in rust_snippets.__all__
+    assert not hasattr(rust_snippets, "prototype_dataframe_apply_helpers")
 
 
 def test_annotation_vocabulary_imports_without_pandas_or_core() -> None:

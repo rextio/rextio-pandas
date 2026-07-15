@@ -59,6 +59,15 @@ materialize definitions for an accepted Series signature even when the
 function contains no plugin claim, and exact-text dedup emits the same support
 only once when a `Series.map` claim also contributes it.
 
+A separate real-Cargo fixture contains only a parameter-only `SeriesF64`
+function and no `Series.map` claim; it proves that type-owned extraction builds,
+executes, and enforces the runtime boundary contract independently. Core
+intentionally rejects a claimless materialized alias return and calls between
+materialized plugin functions (the alias-divergence and RXT092 guards), so
+return-only helper collection is verified at source-generation level. Runtime
+Series return materialization is exercised honestly through the supported
+identity `Series.map` product claim, not described as claimless lowering.
+
 ## DataFrame.apply prototype / NO-GO
 
 `DataFrame.apply(axis=1)` is **not a supported native route**. The plugin does
@@ -66,6 +75,9 @@ not register `pandas.DataFrame.apply` as a covered symbol, does not register
 `DataFrameF64` as a native plugin type, and its normal claim/lower dispatch can
 never produce an apply claim. Check/build reports therefore retain apply code
 as ordinary Python fallback and never expose a hidden native product route.
+The currently shared `boundary_helpers()` text can still place unused prototype
+frame definitions in a Series-generated crate; that is not a registered,
+claimed, or lowered DataFrame apply hot loop/product route.
 
 The repository retains clearly named private prototype helpers and pinned
 characterization evidence for a homogeneous-float64 row loop. That experiment

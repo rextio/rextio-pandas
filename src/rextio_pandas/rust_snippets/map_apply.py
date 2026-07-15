@@ -15,14 +15,95 @@ _STRUCT = {
 }
 _RUST_SCALAR = {SERIES_F64: "f64", SERIES_I64: "i64"}
 
+PINNED_PANDAS_VERSION = "2.3.3"
+PINNED_NUMPY_VERSION = "2.3.5"
+
+
+def _rust_bytes(data: bytes) -> str:
+    """Render ``data`` as a Rust ``&[u8]`` slice literal."""
+    return "&[" + ", ".join(f"0x{byte:02x}u8" for byte in data) + "]"
+
+
+def trusted_method_fingerprints() -> dict[str, bytes]:
+    """Capture immutable code-object fingerprints from the pinned pandas.
+
+    The plugin lowers in an environment pinned to pandas 2.3.3 / numpy 2.3.5.
+    We snapshot the exact ``co_code`` bytecode of the trusted public
+    descriptors so the generated Rust can compare the live runtime descriptor
+    against a fingerprint that ``functools.wraps`` (which copies
+    ``__module__``/``__qualname__`` but never ``__code__``) cannot forge.
+    Extraction uses the pinned class/public descriptor, never an
+    instance-shadowable method.
+    """
+    import numpy
+    import pandas
+
+    if pandas.__version__ != PINNED_PANDAS_VERSION or numpy.__version__ != PINNED_NUMPY_VERSION:
+        raise RuntimeError(
+            "rextio-pandas lowering requires the pinned pandas "
+            f"{PINNED_PANDAS_VERSION}/numpy {PINNED_NUMPY_VERSION}; found "
+            f"pandas {pandas.__version__}/numpy {numpy.__version__}"
+        )
+
+    descriptors = {
+        "series_map": pandas.Series.__dict__["map"],
+        "series_to_numpy": pandas.Series.to_numpy,
+        "frame_apply": pandas.DataFrame.__dict__["apply"],
+        "frame_to_numpy": pandas.DataFrame.__dict__["to_numpy"],
+    }
+    fingerprints: dict[str, bytes] = {}
+    for key, descriptor in descriptors.items():
+        code = getattr(descriptor, "__code__", None)
+        if code is None:  # pragma: no cover - pinned pandas always has code objects
+            raise RuntimeError(f"pinned pandas descriptor {key!r} has no code object")
+        fingerprints[key] = code.co_code
+    return fingerprints
+
+
+_RUST_SIMPLE_ESCAPES = {
+    '"': '\\"',
+    "\\": "\\\\",
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+    "\0": "\\0",
+}
+
 
 def _rust_string(value: str) -> str:
-    return json.dumps(value, ensure_ascii=True)
+    r"""Encode ``value`` as a valid Rust ``&str`` literal.
+
+    ``json.dumps`` emits JSON ``\uXXXX`` escapes, which are *not* valid Rust
+    string escapes (Rust requires ``\u{...}``) and cannot represent non-BMP
+    code points in a single escape. This encoder emits printable ASCII
+    verbatim, the standard Rust simple escapes for quotes/backslashes/controls,
+    and ``\u{hex}`` for every other code point, including full non-BMP scalars.
+    """
+    pieces = ['"']
+    for char in value:
+        simple = _RUST_SIMPLE_ESCAPES.get(char)
+        if simple is not None:
+            pieces.append(simple)
+            continue
+        code_point = ord(char)
+        if 0x20 <= code_point <= 0x7E:
+            pieces.append(char)
+        else:
+            pieces.append(f"\\u{{{code_point:x}}}")
+    pieces.append('"')
+    return "".join(pieces)
 
 
 def boundary_helpers() -> str:
     """Return shared one-shot validation/extraction/materialization helpers."""
     error = {name: _rust_string(message) for name, message in RUNTIME_ERRORS.items()}
+    codes = trusted_method_fingerprints()
+    series_map_co = _rust_bytes(codes["series_map"])
+    series_to_numpy_co = _rust_bytes(codes["series_to_numpy"])
+    frame_apply_co = _rust_bytes(codes["frame_apply"])
+    frame_to_numpy_co = _rust_bytes(codes["frame_to_numpy"])
+    version = _rust_string(PINNED_PANDAS_VERSION)
+    numpy_version = _rust_string(PINNED_NUMPY_VERSION)
     return f"""struct RxtPandasSeriesF64 {{
     values: numpy::ndarray::Array1<f64>,
     name: pyo3::Py<pyo3::PyAny>,
@@ -38,21 +119,60 @@ struct RxtPandasFrameF64 {{
     columns: Vec<String>,
 }}
 
+const __RXTPD_SERIES_MAP_CO: &[u8] = {series_map_co};
+const __RXTPD_SERIES_TO_NUMPY_CO: &[u8] = {series_to_numpy_co};
+const __RXTPD_FRAME_APPLY_CO: &[u8] = {frame_apply_co};
+const __RXTPD_FRAME_TO_NUMPY_CO: &[u8] = {frame_to_numpy_co};
+
 fn __rxtpd_type_error(message: &'static str) -> pyo3::PyErr {{
     pyo3::exceptions::PyTypeError::new_err(message)
 }}
 
-fn __rxtpd_expected_method(
+fn __rxtpd_check_method(
     method: &pyo3::Bound<'_, pyo3::PyAny>,
-    expected_module: &str,
-    qualname: &str,
-) -> pyo3::PyResult<bool> {{
+    trusted_co_code: &[u8],
+    error: &'static str,
+) -> pyo3::PyResult<()> {{
+    use pyo3::types::PyAnyMethods;
+    // A genuine pinned descriptor is a plain Python function. ``functools.wraps``
+    // copies ``__module__``/``__qualname__`` but never ``__code__``, so a
+    // forged replacement, a lambda, a builtin, deletion, or a malformed
+    // descriptor all fail the immutable bytecode-fingerprint comparison below
+    // and surface the stable ``TypeError`` rather than leaking Key/AttributeError.
     if method.cast::<pyo3::types::PyFunction>().is_err() {{
+        return Err(__rxtpd_type_error(error));
+    }}
+    let code = method
+        .getattr("__code__")
+        .map_err(|_| __rxtpd_type_error(error))?;
+    let co_code: Vec<u8> = code
+        .getattr("co_code")
+        .map_err(|_| __rxtpd_type_error(error))?
+        .extract()
+        .map_err(|_| __rxtpd_type_error(error))?;
+    if co_code.as_slice() != trusted_co_code {{
+        return Err(__rxtpd_type_error(error));
+    }}
+    Ok(())
+}}
+
+fn __rxtpd_is_exact_numpy_dtype(
+    py: pyo3::Python<'_>,
+    dtype: &pyo3::Bound<'_, pyo3::PyAny>,
+    expected_name: &str,
+) -> pyo3::PyResult<bool> {{
+    use pyo3::types::PyAnyMethods;
+    let numpy_module = py.import("numpy")?;
+    let numpy_dtype_type = numpy_module.getattr("dtype")?;
+    // Nullable Float64/Int64, numeric Categorical, Sparse, and Arrow-backed
+    // dtypes are NOT instances of ``numpy.dtype``; rejecting non-instances
+    // before conversion refuses every pandas extension storage even when
+    // ``to_numpy()`` would coincidentally yield a numeric ndarray.
+    if !dtype.is_instance(&numpy_dtype_type)? {{
         return Ok(false);
     }}
-    let module: String = method.getattr("__module__")?.extract()?;
-    let actual_qualname: String = method.getattr("__qualname__")?.extract()?;
-    Ok(module == expected_module && actual_qualname == qualname)
+    let expected = numpy_dtype_type.call1((expected_name,))?;
+    dtype.eq(&expected)
 }}
 
 fn __rxtpd_pinned_series_class<'py>(
@@ -63,24 +183,29 @@ fn __rxtpd_pinned_series_class<'py>(
     let numpy_module = py.import("numpy")?;
     let pandas_version: String = pandas.getattr("__version__")?.extract()?;
     let numpy_version: String = numpy_module.getattr("__version__")?.extract()?;
-    if pandas_version != "2.3.3" || numpy_version != "2.3.5" {{
+    if pandas_version != {version} || numpy_version != {numpy_version} {{
         return Err(__rxtpd_type_error({error["version"]}));
     }}
     let series_class = pandas.getattr("Series")?;
     let class_dict = series_class.getattr("__dict__")?;
-    let map_descriptor = class_dict.get_item("map")?;
-    let map_attribute = series_class.getattr("map")?;
-    let to_numpy_attribute = series_class.getattr("to_numpy")?;
-    if !map_descriptor.is(&map_attribute)
-        || !__rxtpd_expected_method(&map_descriptor, "pandas.core.series", "Series.map")?
-        || !__rxtpd_expected_method(
-            &to_numpy_attribute,
-            "pandas.core.base",
-            "IndexOpsMixin.to_numpy",
-        )?
-    {{
+    let map_descriptor = class_dict
+        .get_item("map")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    let map_attribute = series_class
+        .getattr("map")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    let to_numpy_attribute = series_class
+        .getattr("to_numpy")
+        .map_err(|_| __rxtpd_type_error({error["series_method"]}))?;
+    if !map_descriptor.is(&map_attribute) {{
         return Err(__rxtpd_type_error({error["series_method"]}));
     }}
+    __rxtpd_check_method(&map_descriptor, __RXTPD_SERIES_MAP_CO, {error["series_method"]})?;
+    __rxtpd_check_method(
+        &to_numpy_attribute,
+        __RXTPD_SERIES_TO_NUMPY_CO,
+        {error["series_method"]},
+    )?;
     Ok(series_class)
 }}
 
@@ -92,36 +217,40 @@ fn __rxtpd_pinned_frame_class<'py>(
     let numpy_module = py.import("numpy")?;
     let pandas_version: String = pandas.getattr("__version__")?.extract()?;
     let numpy_version: String = numpy_module.getattr("__version__")?.extract()?;
-    if pandas_version != "2.3.3" || numpy_version != "2.3.5" {{
+    if pandas_version != {version} || numpy_version != {numpy_version} {{
         return Err(__rxtpd_type_error({error["version"]}));
     }}
     let frame_class = pandas.getattr("DataFrame")?;
     let class_dict = frame_class.getattr("__dict__")?;
-    let apply_descriptor = class_dict.get_item("apply")?;
-    let apply_attribute = frame_class.getattr("apply")?;
-    let to_numpy_descriptor = class_dict.get_item("to_numpy")?;
-    let to_numpy_attribute = frame_class.getattr("to_numpy")?;
-    if !apply_descriptor.is(&apply_attribute)
-        || !to_numpy_descriptor.is(&to_numpy_attribute)
-        || !__rxtpd_expected_method(
-            &apply_descriptor,
-            "pandas.core.frame",
-            "DataFrame.apply",
-        )?
-        || !__rxtpd_expected_method(
-            &to_numpy_descriptor,
-            "pandas.core.frame",
-            "DataFrame.to_numpy",
-        )?
-    {{
+    let apply_descriptor = class_dict
+        .get_item("apply")
+        .map_err(|_| __rxtpd_type_error({error["frame_method"]}))?;
+    let apply_attribute = frame_class
+        .getattr("apply")
+        .map_err(|_| __rxtpd_type_error({error["frame_method"]}))?;
+    let to_numpy_descriptor = class_dict
+        .get_item("to_numpy")
+        .map_err(|_| __rxtpd_type_error({error["frame_method"]}))?;
+    let to_numpy_attribute = frame_class
+        .getattr("to_numpy")
+        .map_err(|_| __rxtpd_type_error({error["frame_method"]}))?;
+    if !apply_descriptor.is(&apply_attribute) || !to_numpy_descriptor.is(&to_numpy_attribute) {{
         return Err(__rxtpd_type_error({error["frame_method"]}));
     }}
+    __rxtpd_check_method(&apply_descriptor, __RXTPD_FRAME_APPLY_CO, {error["frame_method"]})?;
+    __rxtpd_check_method(
+        &to_numpy_descriptor,
+        __RXTPD_FRAME_TO_NUMPY_CO,
+        {error["frame_method"]},
+    )?;
     Ok(frame_class)
 }}
 
 fn __rxtpd_series_parts<'py>(
     py: pyo3::Python<'py>,
     value: &pyo3::Bound<'py, pyo3::PyAny>,
+    expected_dtype: &str,
+    dtype_error: &'static str,
 ) -> pyo3::PyResult<(pyo3::Py<pyo3::PyAny>, pyo3::Bound<'py, pyo3::PyAny>)> {{
     use pyo3::types::{{PyAnyMethods, PyDict, PyDictMethods, PyString}};
     let series_class = __rxtpd_pinned_series_class(py)?;
@@ -168,6 +297,10 @@ fn __rxtpd_series_parts<'py>(
     if !name.is_none() && !name.is_instance_of::<PyString>() {{
         return Err(__rxtpd_type_error({error["series_name"]}));
     }}
+    let dtype = value.getattr("dtype")?;
+    if !__rxtpd_is_exact_numpy_dtype(py, &dtype, expected_dtype)? {{
+        return Err(__rxtpd_type_error(dtype_error));
+    }}
     let to_numpy = series_class.getattr("to_numpy")?;
     let kwargs = PyDict::new(py);
     kwargs.set_item("copy", false)?;
@@ -180,7 +313,7 @@ fn __rxtpd_extract_series_f64<'py>(
     value: &pyo3::Bound<'py, pyo3::PyAny>,
 ) -> pyo3::PyResult<RxtPandasSeriesF64> {{
     use numpy::PyArrayMethods;
-    let (name, array) = __rxtpd_series_parts(py, value)?;
+    let (name, array) = __rxtpd_series_parts(py, value, "float64", {error["series_f64"]})?;
     let typed = array
         .cast::<numpy::PyArray1<f64>>()
         .map_err(|_| __rxtpd_type_error({error["series_f64"]}))?;
@@ -193,7 +326,7 @@ fn __rxtpd_extract_series_i64<'py>(
     value: &pyo3::Bound<'py, pyo3::PyAny>,
 ) -> pyo3::PyResult<RxtPandasSeriesI64> {{
     use numpy::PyArrayMethods;
-    let (name, array) = __rxtpd_series_parts(py, value)?;
+    let (name, array) = __rxtpd_series_parts(py, value, "int64", {error["series_i64"]})?;
     let typed = array
         .cast::<numpy::PyArray1<i64>>()
         .map_err(|_| __rxtpd_type_error({error["series_i64"]}))?;
@@ -262,15 +395,17 @@ fn __rxtpd_extract_frame_f64<'py>(
     if column_names.len() != shape.1 {{
         return Err(__rxtpd_type_error({error["frame_schema"]}));
     }}
-    let numpy_module = py.import("numpy")?;
-    let expected_dtype = numpy_module.getattr("dtype")?.call1(("float64",))?;
-    let all_f64: bool = value
-        .getattr("dtypes")?
-        .call_method1("eq", (expected_dtype,))?
-        .call_method0("all")?
-        .extract()?;
-    if !all_f64 {{
-        return Err(__rxtpd_type_error({error["frame_f64"]}));
+    // Require every column to be exact non-nullable NumPy float64 storage.
+    // Iterating with the ``numpy.dtype`` instance check rejects nullable
+    // Float64, numeric Categorical, Sparse, and Arrow-backed columns even if
+    // their ``__eq__`` were to compare equal to ``float64``.
+    let dtype_list = value.getattr("dtypes")?.call_method0("tolist")?;
+    let dtype_count = dtype_list.len()?;
+    for position in 0..dtype_count {{
+        let item = dtype_list.get_item(position)?;
+        if !__rxtpd_is_exact_numpy_dtype(py, &item, "float64")? {{
+            return Err(__rxtpd_type_error({error["frame_f64"]}));
+        }}
     }}
     let to_numpy = frame_class.getattr("to_numpy")?;
     let kwargs = PyDict::new(py);

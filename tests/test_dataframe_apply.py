@@ -27,6 +27,12 @@ from rextio.plugins.api import (
 from rextio_pandas.claim.map_apply import DATAFRAME_APPLY_RULE
 from rextio_pandas.diagnostics import FRAME_F64, SERIES_F64
 from rextio_pandas.plugin import RextioPandasPlugin
+from rextio_pandas.rust_snippets.map_apply import (
+    _rust_string,
+    boundary_helpers,
+    dataframe_apply_helpers,
+    trusted_method_fingerprints,
+)
 
 from conftest import pandas_registry
 
@@ -267,6 +273,85 @@ def test_lower_is_schema_hashed_deterministic_and_pure() -> None:
     assert "Python::with_gil" not in hot
     assert ".call" not in hot
     assert "+" not in hot
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("left", '"left"'),
+        ("값", r'"\u{ac12}"'),
+        ('a"b\\c', r'"a\"b\\c"'),
+        ("\n\t\r\x00", r'"\n\t\r\0"'),
+        ("\x1f", r'"\u{1f}"'),
+        ("\U0001f600", r'"\u{1f600}"'),
+    ],
+)
+def test_rust_string_encoder_emits_valid_rust_literals(source: str, expected: str) -> None:
+    encoded = _rust_string(source)
+    assert encoded == expected
+    # JSON's ``\uXXXX`` (no braces) is not a valid Rust escape and must not leak.
+    assert "\\u" not in encoded or "\\u{" in encoded
+
+
+def test_unicode_schema_field_lowers_to_braced_rust_unicode_escape() -> None:
+    schema_meta = SchemaMeta("app.Row", (SchemaField("값", "float"),))
+    body = CallableBodyExpr(
+        kind="subscript",
+        name="값",
+        children=(
+            CallableBodyExpr(kind="param", param_index=0, name="row", result_type="app.Row"),
+        ),
+        result_type="float",
+    )
+    meta = CallableMeta(
+        arg_index=0,
+        qualname="app.udf",
+        params=(CallableParam("row", "app.Row"),),
+        return_type="float",
+        body=CallableBody(available=True, expression=body),
+    )
+    _, helpers = dataframe_apply_helpers(schema_meta, meta)
+    source = "\n".join(helpers)
+    assert r'EXPECTED_COLUMNS: &[&str] = &["\u{ac12}"]' in source
+    # No bare JSON-style ``\uXXXX`` escapes survive into the Rust source.
+    import re
+
+    assert re.search(r"\\u(?!\{)", source) is None
+
+
+def test_boundary_uses_codeobject_identity_not_forgeable_names() -> None:
+    source = boundary_helpers()
+    fingerprints = trusted_method_fingerprints()
+    # The forgeable ``__module__``/``__qualname__`` comparison is gone; only the
+    # explanatory comment may mention them, never a runtime getattr.
+    assert 'getattr("__module__")' not in source
+    assert 'getattr("__qualname__")' not in source
+    assert "expected_module" not in source
+    # Immutable per-method bytecode fingerprints are embedded and compared.
+    for constant in (
+        "__RXTPD_SERIES_MAP_CO",
+        "__RXTPD_SERIES_TO_NUMPY_CO",
+        "__RXTPD_FRAME_APPLY_CO",
+        "__RXTPD_FRAME_TO_NUMPY_CO",
+    ):
+        assert f"const {constant}: &[u8] =" in source
+        assert f"{constant}," in source
+    assert "co_code.as_slice() != trusted_co_code" in source
+    # The embedded fingerprint is the real pinned pandas bytecode.
+    first_byte = fingerprints["frame_apply"][0]
+    assert f"0x{first_byte:02x}u8" in source
+
+
+def test_boundary_rejects_extension_dtypes_before_conversion() -> None:
+    source = boundary_helpers()
+    assert "fn __rxtpd_is_exact_numpy_dtype" in source
+    assert "if !dtype.is_instance(&numpy_dtype_type)?" in source
+    # The Series extraction gates dtype before ``to_numpy`` for both routes.
+    assert '__rxtpd_series_parts(py, value, "float64"' in source
+    assert '__rxtpd_series_parts(py, value, "int64"' in source
+    assert "if !__rxtpd_is_exact_numpy_dtype(py, &dtype, expected_dtype)?" in source
+    # The frame extraction checks every column dtype with the same instance gate.
+    assert '__rxtpd_is_exact_numpy_dtype(py, &item, "float64")?' in source
 
 
 def _write_module(root: Path, source: str) -> None:

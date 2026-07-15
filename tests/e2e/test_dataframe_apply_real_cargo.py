@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 import os
@@ -52,6 +53,14 @@ def classify_row(row) -> float:
     return row["first"] if row["first"] > 0.0 and row["second"] <= 5.0 else -1.5
 
 
+class Unicode:
+    값: float
+
+
+def unicode_row(row) -> float:
+    return row["값"] if row["값"] >= 0.0 else -row["값"]
+
+
 def apply_one(frame: DataFrameF64[One]) -> SeriesF64:
     return frame.apply(absolute_row, axis=1)
 
@@ -62,6 +71,10 @@ def apply_two(frame: DataFrameF64[Two]) -> SeriesF64:
 
 def apply_three(frame: DataFrameF64[Three]) -> SeriesF64:
     return frame.apply(classify_row, axis=1)
+
+
+def apply_unicode(frame: DataFrameF64[Unicode]) -> SeriesF64:
+    return frame.apply(unicode_row, axis=1)
 """
 
 
@@ -105,7 +118,7 @@ def test_report_and_generated_apply_loops_are_real_native_route(
         for module in report["modules"]
         for function in module["functions"]
     }
-    for name in ("apply_one", "apply_two", "apply_three"):
+    for name in ("apply_one", "apply_two", "apply_three", "apply_unicode"):
         record = functions[f"pandas_app.frames.{name}"]
         assert record["native_status"] == "accepted"
         assert record["route"] == "native-plugin:rextio-pandas"
@@ -113,11 +126,16 @@ def test_report_and_generated_apply_loops_are_real_native_route(
     rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
         encoding="utf-8"
     )
-    assert rust.count("fn __rxtpd_apply_values_") == 3
-    assert rust.count("py.detach(|| __rxtpd_apply_values_") == 3
+    assert rust.count("fn __rxtpd_apply_values_") == 4
+    assert rust.count("py.detach(|| __rxtpd_apply_values_") == 4
     assert 'EXPECTED_COLUMNS: &[&str] = &["value"]' in rust
     assert 'EXPECTED_COLUMNS: &[&str] = &["left", "right"]' in rust
     assert 'EXPECTED_COLUMNS: &[&str] = &["first", "second", "third"]' in rust
+    # Unicode schema fields must be emitted as valid Rust ``\u{...}`` escapes.
+    assert r'EXPECTED_COLUMNS: &[&str] = &["\u{ac12}"]' in rust
+    import re as _re
+
+    assert _re.search(r"\\u(?!\{)", rust) is None
     for body in rust.split("fn __rxtpd_apply_values_")[1:]:
         hot = body.split("fn __rxtpd_apply_frame_", 1)[0]
         assert "for row in input.outer_iter()" in hot
@@ -293,6 +311,16 @@ print(json.dumps({
             RUNTIME_ERRORS["frame_f64"],
         ),
         (
+            "frame = pd.DataFrame({'left': pd.Series([1.0, 2.0], dtype='category'), "
+            "'right': pd.Series([3.0, 4.0], dtype='category')})",
+            RUNTIME_ERRORS["frame_f64"],
+        ),
+        (
+            "frame = pd.DataFrame({'left': pd.Series([1.0], dtype='Sparse[float64]'), "
+            "'right': pd.Series([2.0], dtype='Sparse[float64]')})",
+            RUNTIME_ERRORS["frame_f64"],
+        ),
+        (
             "frame = pd.DataFrame({'left': [1.0], 'right': [2.0]}, "
             "index=pd.Index([4]), dtype='float64')",
             RUNTIME_ERRORS["frame_index"],
@@ -374,3 +402,78 @@ else:
     completed = _run_fresh(project, "native", body)
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.splitlines() == ["TypeError", expected]
+
+
+def test_functools_wraps_forgery_of_frame_apply_is_rejected(project: CertifiedProject) -> None:
+    body = """
+import functools
+import pandas as pd
+from pandas_app.frames import apply_two
+
+_original = pd.DataFrame.__dict__["apply"]
+
+@functools.wraps(_original)
+def _forged(self, *args, **kwargs):
+    return pd.Series([777.0] * len(self), index=self.index)
+
+pd.DataFrame.apply = _forged
+assert _forged.__module__ == "pandas.core.frame"
+assert _forged.__qualname__ == "DataFrame.apply"
+
+frame = pd.DataFrame({"left": [1.0, 2.0], "right": [3.0, 4.0]}, dtype="float64")
+try:
+    apply_two(frame)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("forged DataFrame.apply was accepted")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["frame_method"]]
+
+
+def test_arrow_backed_frame_rejected_when_pyarrow_available(project: CertifiedProject) -> None:
+    if importlib.util.find_spec("pyarrow") is None:
+        pytest.skip("pyarrow is not installed; Arrow-backed storage cannot be constructed")
+    body = """
+import pandas as pd
+from pandas_app.frames import apply_two
+frame = pd.DataFrame({
+    "left": pd.Series([1.0, 2.0], dtype="float64[pyarrow]"),
+    "right": pd.Series([3.0, 4.0], dtype="float64[pyarrow]"),
+})
+try:
+    apply_two(frame)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("expected contract error")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["frame_f64"]]
+
+
+def test_unicode_schema_field_native_equals_fallback(project: CertifiedProject) -> None:
+    frame = pd.DataFrame(
+        {"값": [-0.0, 0.0, math.nan, math.inf, -math.inf, -2.5, 3.0]},
+        dtype="float64",
+    )
+    checker = project.equivalence_checker(
+        "pandas_app.frames.apply_unicode",
+        equals=_series_equal,
+    )
+    result = checker(frame)
+    expected = frame.apply(
+        lambda row: row["값"] if row["값"] >= 0.0 else -row["값"],
+        axis=1,
+    )
+    assert type(result) is pd.Series
+    assert_series_equal(result, expected, check_exact=True)
+    assert np.array_equal(
+        result.to_numpy().view(np.uint64),
+        expected.to_numpy().view(np.uint64),
+    )

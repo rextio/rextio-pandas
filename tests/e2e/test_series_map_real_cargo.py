@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 import os
@@ -257,6 +258,20 @@ print(json.dumps({
             "s = pd.Series([1.0], dtype='float64')\npd.Series.map = lambda self, f: self",
             RUNTIME_ERRORS["series_method"],
         ),
+        # Extension dtypes whose ``to_numpy()`` yields a numeric ndarray must be
+        # rejected before conversion (float64 route).
+        (
+            "s = pd.Series([1.0, 2.0], dtype='Float64')",
+            RUNTIME_ERRORS["series_f64"],
+        ),
+        (
+            "s = pd.Series([1.0, 2.0], dtype='category')",
+            RUNTIME_ERRORS["series_f64"],
+        ),
+        (
+            "s = pd.Series([1.0, 2.0], dtype='Sparse[float64]')",
+            RUNTIME_ERRORS["series_f64"],
+        ),
     ],
 )
 def test_runtime_contract_misses_raise_exact_type_error(
@@ -279,3 +294,117 @@ else:
     completed = _run_fresh(project, "native", body)
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.splitlines() == ["TypeError", expected]
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "s = pd.Series([1, 2], dtype='Int64')",
+        "s = pd.Series([1, 2], dtype='category')",
+        "s = pd.Series([1, 2], dtype='Sparse[int64]')",
+    ],
+)
+def test_i64_route_rejects_extension_storage_before_conversion(
+    project: CertifiedProject,
+    setup: str,
+) -> None:
+    body = f"""
+import pandas as pd
+from pandas_app.kernels import map_i64
+{setup}
+try:
+    map_i64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("expected contract error")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_i64"]]
+
+
+def test_arrow_backed_series_rejected_when_pyarrow_available(project: CertifiedProject) -> None:
+    if importlib.util.find_spec("pyarrow") is None:
+        pytest.skip("pyarrow is not installed; Arrow-backed storage cannot be constructed")
+    body = """
+import pandas as pd
+from pandas_app.kernels import map_f64
+s = pd.Series([1.0, 2.0], dtype="float64[pyarrow]")
+try:
+    map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("expected contract error")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_f64"]]
+
+
+def test_functools_wraps_forgery_of_series_map_is_rejected(project: CertifiedProject) -> None:
+    # A ``functools.wraps`` replacement copies ``__module__``/``__qualname__``
+    # (which the old guard trusted) but never ``__code__``. It must now fail the
+    # bytecode-fingerprint identity check and refuse to route natively.
+    body = """
+import functools
+import pandas as pd
+from pandas_app.kernels import map_f64
+
+_original = pd.Series.__dict__["map"]
+
+@functools.wraps(_original)
+def _forged(self, *args, **kwargs):
+    return pd.Series([777] * len(self), index=self.index, name=self.name)
+
+pd.Series.map = _forged
+assert _forged.__module__ == "pandas.core.series"
+assert _forged.__qualname__ == "Series.map"
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+try:
+    map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("forged Series.map was accepted")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_runtime_guards_stay_active_under_python_dash_o(project: CertifiedProject) -> None:
+    # The guards are generated Rust, so ``python -O`` (which strips Python
+    # ``assert`` statements) cannot disable them.
+    body = """
+import pandas as pd
+from pandas_app.kernels import map_f64
+s = pd.Series([1.0, 2.0], dtype="Float64")
+try:
+    map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("guard was disabled under -O")
+"""
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(project.build_python_dir),
+        "REXTIO_NATIVE_MODE": "native",
+    }
+    completed = subprocess.run(
+        [sys.executable, "-O", "-c", body],
+        cwd=project.project_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_f64"]]

@@ -8,4 +8,10 @@ build/
 dist/
 *.egg-info/
 target/
-
+# Ignore stale/intermediate benchmark artifacts but keep the final raw JSON and
+# its retained check/build evidence trackable so the director can preserve
+# serialized performance evidence. Smoke runs write to an ignored temp location.
+benchmarks/results/*
+!benchmarks/results/latest.json
+!benchmarks/results/evidence/
+!benchmarks/results/evidence/**

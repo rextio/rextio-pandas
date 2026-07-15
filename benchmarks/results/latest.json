@@ -1,0 +1,929 @@
+{
+  "cells": [
+    {
+      "contexts": {
+        "vectorized_numpy_pandas": {
+          "classification": "context-only; not a Rextio target claim",
+          "correctness_digest": "09a58caa21da99a69642040f66834dab348d9879af0c7313ceb249d3c12e0ea9",
+          "loops": 2048,
+          "matches_fallback_digest": true,
+          "median_ns_per_call": 7055.48095703125,
+          "samples_ns_per_call": [
+            7100.5654296875,
+            6994.587890625,
+            6968.4248046875,
+            7061.970703125,
+            6984.8427734375,
+            7141.458984375,
+            7120.68701171875,
+            7014.58740234375,
+            7055.48095703125
+          ]
+        }
+      },
+      "headline_eligible": true,
+      "headline_ineligible_reasons": [],
+      "headline_note": "verified exact Series route",
+      "numba": {
+        "available": true,
+        "classification": "context-only; JIT compile is not a Rextio target claim",
+        "cold_compile_and_call_ns": 278901375,
+        "correctness_digest": "09a58caa21da99a69642040f66834dab348d9879af0c7313ceb249d3c12e0ea9",
+        "matches_fallback_digest": true,
+        "version": "0.62.1",
+        "warm_loops": 2048,
+        "warm_median_ns_per_call": 5491.27197265625,
+        "warm_samples_ns_per_call": [
+          5501.8515625,
+          5425.7607421875,
+          5514.36376953125,
+          5666.52392578125,
+          5429.15869140625,
+          5491.27197265625,
+          5994.62890625,
+          5451.375,
+          5431.05029296875
+        ]
+      },
+      "product": {
+        "correctness_digest": {
+          "fallback": "09a58caa21da99a69642040f66834dab348d9879af0c7313ceb249d3c12e0ea9",
+          "native": "09a58caa21da99a69642040f66834dab348d9879af0c7313ceb249d3c12e0ea9"
+        },
+        "loops": {
+          "fallback": 2048,
+          "native": 256
+        },
+        "median_ns_per_call": {
+          "fallback": 9392.923828125,
+          "native": 63520.671875
+        },
+        "paired_bootstrap": {
+          "ci95_high": 6.916502500096132,
+          "ci95_low": 6.749214262648266,
+          "median_native_over_fallback": 6.7984505279564065
+        },
+        "samples_ns_per_call": {
+          "fallback": [
+            9392.923828125,
+            9343.404296875,
+            9302.388671875,
+            9548.01416015625,
+            9430.2978515625,
+            9395.03955078125,
+            9327.83984375,
+            9265.03466796875,
+            9422.0986328125
+          ],
+          "native": [
+            63394.85546875,
+            63520.671875,
+            62843.09765625,
+            62409.015625,
+            64421.38671875,
+            64071.125,
+            74364.74609375,
+            62815.91796875,
+            65167.96875
+          ]
+        },
+        "schedule": [
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ]
+        ],
+        "schedule_balance": {
+          "all_pairs_valid": true,
+          "fallback_first": 4,
+          "is_counterbalanced": true,
+          "native_first": 5
+        }
+      },
+      "route": "series.map",
+      "route_verified": true,
+      "size": 1
+    },
+    {
+      "contexts": {
+        "vectorized_numpy_pandas": {
+          "classification": "context-only; not a Rextio target claim",
+          "correctness_digest": "327a51f0aa2f0e2024601de27e61bdf6b4116e0f3020c674e7d9177f0c9bd37b",
+          "loops": 2048,
+          "matches_fallback_digest": true,
+          "median_ns_per_call": 7196.1259765625,
+          "samples_ns_per_call": [
+            7154.35791015625,
+            7127.8076171875,
+            7125.91552734375,
+            7196.1259765625,
+            7253.7841796875,
+            7148.8447265625,
+            7336.0185546875,
+            7345.0927734375,
+            8811.97119140625
+          ]
+        }
+      },
+      "headline_eligible": true,
+      "headline_ineligible_reasons": [],
+      "headline_note": "verified exact Series route",
+      "numba": {
+        "available": true,
+        "classification": "context-only; JIT compile is not a Rextio target claim",
+        "cold_compile_and_call_ns": 35339083,
+        "correctness_digest": "327a51f0aa2f0e2024601de27e61bdf6b4116e0f3020c674e7d9177f0c9bd37b",
+        "matches_fallback_digest": true,
+        "version": "0.62.1",
+        "warm_loops": 2048,
+        "warm_median_ns_per_call": 5322.69287109375,
+        "warm_samples_ns_per_call": [
+          5330.0986328125,
+          5307.10888671875,
+          5376.64794921875,
+          5462.32080078125,
+          5307.71875,
+          5211.75146484375,
+          5289.61181640625,
+          5322.69287109375,
+          5364.013671875
+        ]
+      },
+      "product": {
+        "correctness_digest": {
+          "fallback": "327a51f0aa2f0e2024601de27e61bdf6b4116e0f3020c674e7d9177f0c9bd37b",
+          "native": "327a51f0aa2f0e2024601de27e61bdf6b4116e0f3020c674e7d9177f0c9bd37b"
+        },
+        "loops": {
+          "fallback": 1024,
+          "native": 256
+        },
+        "median_ns_per_call": {
+          "fallback": 10052.001953125,
+          "native": 63574.87109375
+        },
+        "paired_bootstrap": {
+          "ci95_high": 6.496967483298986,
+          "ci95_low": 6.091895073509584,
+          "median_native_over_fallback": 6.330471742543171
+        },
+        "samples_ns_per_call": {
+          "fallback": [
+            10042.1953125,
+            9942.2197265625,
+            10066.8134765625,
+            10175.6591796875,
+            10052.001953125,
+            10226.033203125,
+            10165.4873046875,
+            9953.125,
+            10040.771484375
+          ],
+          "native": [
+            65243.81640625,
+            64812.3359375,
+            63810.546875,
+            64073.73046875,
+            62716.14453125,
+            62237.140625,
+            61927.08203125,
+            63007.9765625,
+            63574.87109375
+          ]
+        },
+        "schedule": [
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ]
+        ],
+        "schedule_balance": {
+          "all_pairs_valid": true,
+          "fallback_first": 4,
+          "is_counterbalanced": true,
+          "native_first": 5
+        }
+      },
+      "route": "series.map",
+      "route_verified": true,
+      "size": 10
+    },
+    {
+      "contexts": {
+        "vectorized_numpy_pandas": {
+          "classification": "context-only; not a Rextio target claim",
+          "correctness_digest": "65ed94180cf242ce34125208a75032145c1d9a4f3e051fd26d2f21f4ea3200b3",
+          "loops": 2048,
+          "matches_fallback_digest": true,
+          "median_ns_per_call": 7243.8154296875,
+          "samples_ns_per_call": [
+            7267.31396484375,
+            7145.263671875,
+            7266.744140625,
+            7243.8154296875,
+            7274.6171875,
+            7417.52099609375,
+            7190.00244140625,
+            7159.708984375,
+            7206.15673828125
+          ]
+        }
+      },
+      "headline_eligible": true,
+      "headline_ineligible_reasons": [],
+      "headline_note": "verified exact Series route",
+      "numba": {
+        "available": true,
+        "classification": "context-only; JIT compile is not a Rextio target claim",
+        "cold_compile_and_call_ns": 37816416,
+        "correctness_digest": "65ed94180cf242ce34125208a75032145c1d9a4f3e051fd26d2f21f4ea3200b3",
+        "matches_fallback_digest": true,
+        "version": "0.62.1",
+        "warm_loops": 2048,
+        "warm_median_ns_per_call": 5501.74951171875,
+        "warm_samples_ns_per_call": [
+          5501.74951171875,
+          5511.41357421875,
+          5420.7763671875,
+          5403.6455078125,
+          5502.84814453125,
+          5414.0419921875,
+          5521.3623046875,
+          5470.15380859375,
+          5529.86669921875
+        ]
+      },
+      "product": {
+        "correctness_digest": {
+          "fallback": "65ed94180cf242ce34125208a75032145c1d9a4f3e051fd26d2f21f4ea3200b3",
+          "native": "65ed94180cf242ce34125208a75032145c1d9a4f3e051fd26d2f21f4ea3200b3"
+        },
+        "loops": {
+          "fallback": 1024,
+          "native": 256
+        },
+        "median_ns_per_call": {
+          "fallback": 15546.18359375,
+          "native": 64736.4921875
+        },
+        "paired_bootstrap": {
+          "ci95_high": 4.194982866363967,
+          "ci95_low": 4.097834995105277,
+          "median_native_over_fallback": 4.127253210018118
+        },
+        "samples_ns_per_call": {
+          "fallback": [
+            15723.673828125,
+            15546.18359375,
+            15431.884765625,
+            15712.6064453125,
+            15929.1181640625,
+            15753.0517578125,
+            15440.0634765625,
+            15472.900390625,
+            15505.65625
+          ],
+          "native": [
+            63934.24609375,
+            63924.64453125,
+            64736.4921875,
+            65109.05078125,
+            65284.5078125,
+            66017.90625,
+            62907.55078125,
+            65070.15234375,
+            63995.76953125
+          ]
+        },
+        "schedule": [
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ]
+        ],
+        "schedule_balance": {
+          "all_pairs_valid": true,
+          "fallback_first": 4,
+          "is_counterbalanced": true,
+          "native_first": 5
+        }
+      },
+      "route": "series.map",
+      "route_verified": true,
+      "size": 100
+    },
+    {
+      "contexts": {
+        "vectorized_numpy_pandas": {
+          "classification": "context-only; not a Rextio target claim",
+          "correctness_digest": "b00354d3844bbb00208b813c83150daf598ec0041bcd780b2d1142d0e610b3b7",
+          "loops": 2048,
+          "matches_fallback_digest": true,
+          "median_ns_per_call": 8631.53076171875,
+          "samples_ns_per_call": [
+            8703.40966796875,
+            8561.70654296875,
+            8712.056640625,
+            8674.31640625,
+            8698.0185546875,
+            8631.53076171875,
+            8617.63525390625,
+            8615.92626953125,
+            8624.9189453125
+          ]
+        }
+      },
+      "headline_eligible": true,
+      "headline_ineligible_reasons": [],
+      "headline_note": "verified exact Series route",
+      "numba": {
+        "available": true,
+        "classification": "context-only; JIT compile is not a Rextio target claim",
+        "cold_compile_and_call_ns": 39138500,
+        "correctness_digest": "b00354d3844bbb00208b813c83150daf598ec0041bcd780b2d1142d0e610b3b7",
+        "matches_fallback_digest": true,
+        "version": "0.62.1",
+        "warm_loops": 2048,
+        "warm_median_ns_per_call": 5816.8134765625,
+        "warm_samples_ns_per_call": [
+          5785.11572265625,
+          5782.43017578125,
+          5777.75048828125,
+          5826.5380859375,
+          5858.94775390625,
+          5847.43212890625,
+          5771.341796875,
+          5816.8134765625,
+          5864.21728515625
+        ]
+      },
+      "product": {
+        "correctness_digest": {
+          "fallback": "b00354d3844bbb00208b813c83150daf598ec0041bcd780b2d1142d0e610b3b7",
+          "native": "b00354d3844bbb00208b813c83150daf598ec0041bcd780b2d1142d0e610b3b7"
+        },
+        "loops": {
+          "fallback": 256,
+          "native": 256
+        },
+        "median_ns_per_call": {
+          "fallback": 72838.05078125,
+          "native": 64894.04296875
+        },
+        "paired_bootstrap": {
+          "ci95_high": 0.9088017674318769,
+          "ci95_low": 0.8790083573938597,
+          "median_native_over_fallback": 0.8896497710659491
+        },
+        "samples_ns_per_call": {
+          "fallback": [
+            72867.0234375,
+            72993.0,
+            72838.05078125,
+            72057.78125,
+            73435.546875,
+            71181.4765625,
+            72448.56640625,
+            72829.58984375,
+            72943.359375
+          ],
+          "native": [
+            66221.6796875,
+            64161.45703125,
+            64790.203125,
+            65374.51171875,
+            63290.203125,
+            66083.66015625,
+            64398.76171875,
+            66051.59765625,
+            64894.04296875
+          ]
+        },
+        "schedule": [
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ]
+        ],
+        "schedule_balance": {
+          "all_pairs_valid": true,
+          "fallback_first": 5,
+          "is_counterbalanced": true,
+          "native_first": 4
+        }
+      },
+      "route": "series.map",
+      "route_verified": true,
+      "size": 1000
+    },
+    {
+      "contexts": {
+        "vectorized_numpy_pandas": {
+          "classification": "context-only; not a Rextio target claim",
+          "correctness_digest": "db470cc562a3b1a3fe7c6e98f70e4a4d95d6c0a25a90423b306cec5f8352e3db",
+          "loops": 1024,
+          "matches_fallback_digest": true,
+          "median_ns_per_call": 16069.986328125,
+          "samples_ns_per_call": [
+            16196.8583984375,
+            16419.4736328125,
+            15915.5673828125,
+            16200.48046875,
+            16570.150390625,
+            15813.8837890625,
+            16011.5966796875,
+            16034.6279296875,
+            16069.986328125
+          ]
+        }
+      },
+      "headline_eligible": true,
+      "headline_ineligible_reasons": [],
+      "headline_note": "verified exact Series route",
+      "numba": {
+        "available": true,
+        "classification": "context-only; JIT compile is not a Rextio target claim",
+        "cold_compile_and_call_ns": 39158750,
+        "correctness_digest": "db470cc562a3b1a3fe7c6e98f70e4a4d95d6c0a25a90423b306cec5f8352e3db",
+        "matches_fallback_digest": true,
+        "version": "0.62.1",
+        "warm_loops": 2048,
+        "warm_median_ns_per_call": 7763.93603515625,
+        "warm_samples_ns_per_call": [
+          7649.5771484375,
+          7796.48828125,
+          7705.4443359375,
+          7730.55029296875,
+          7766.39794921875,
+          7737.50830078125,
+          7794.4130859375,
+          7841.552734375,
+          7763.93603515625
+        ]
+      },
+      "product": {
+        "correctness_digest": {
+          "fallback": "db470cc562a3b1a3fe7c6e98f70e4a4d95d6c0a25a90423b306cec5f8352e3db",
+          "native": "db470cc562a3b1a3fe7c6e98f70e4a4d95d6c0a25a90423b306cec5f8352e3db"
+        },
+        "loops": {
+          "fallback": 16,
+          "native": 128
+        },
+        "median_ns_per_call": {
+          "fallback": 662190.125,
+          "native": 82327.8046875
+        },
+        "paired_bootstrap": {
+          "ci95_high": 0.1282110569516215,
+          "ci95_low": 0.1210610322757458,
+          "median_native_over_fallback": 0.12565558523640638
+        },
+        "samples_ns_per_call": {
+          "fallback": [
+            634127.5625,
+            667330.75,
+            680052.0625,
+            664380.1875,
+            639674.5,
+            646877.5625,
+            648903.6875,
+            662190.125,
+            663023.4375
+          ],
+          "native": [
+            86048.171875,
+            83853.8359375,
+            82327.8046875,
+            83918.9453125,
+            82013.34375,
+            76625.0,
+            80369.140625,
+            81637.046875,
+            83838.21875
+          ]
+        },
+        "schedule": [
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "fallback",
+            "native"
+          ]
+        ],
+        "schedule_balance": {
+          "all_pairs_valid": true,
+          "fallback_first": 5,
+          "is_counterbalanced": true,
+          "native_first": 4
+        }
+      },
+      "route": "series.map",
+      "route_verified": true,
+      "size": 10000
+    },
+    {
+      "contexts": {
+        "vectorized_numpy_pandas": {
+          "classification": "context-only; not a Rextio target claim",
+          "correctness_digest": "2ade727da236aa084155d28e3a0523b4fb12d768178d682edb06c479c6ccbc42",
+          "loops": 128,
+          "matches_fallback_digest": true,
+          "median_ns_per_call": 78456.7109375,
+          "samples_ns_per_call": [
+            77357.421875,
+            76766.28125,
+            79299.8046875,
+            75972.3359375,
+            78456.7109375,
+            78747.390625,
+            81132.484375,
+            78216.46875,
+            84731.4453125
+          ]
+        }
+      },
+      "headline_eligible": true,
+      "headline_ineligible_reasons": [],
+      "headline_note": "verified exact Series route",
+      "numba": {
+        "available": true,
+        "classification": "context-only; JIT compile is not a Rextio target claim",
+        "cold_compile_and_call_ns": 37668166,
+        "correctness_digest": "2ade727da236aa084155d28e3a0523b4fb12d768178d682edb06c479c6ccbc42",
+        "matches_fallback_digest": true,
+        "version": "0.62.1",
+        "warm_loops": 512,
+        "warm_median_ns_per_call": 20675.69921875,
+        "warm_samples_ns_per_call": [
+          20829.021484375,
+          20232.91015625,
+          20645.671875,
+          20753.98828125,
+          20397.4609375,
+          20675.69921875,
+          20383.951171875,
+          20724.853515625,
+          20748.69921875
+        ]
+      },
+      "product": {
+        "correctness_digest": {
+          "fallback": "2ade727da236aa084155d28e3a0523b4fb12d768178d682edb06c479c6ccbc42",
+          "native": "2ade727da236aa084155d28e3a0523b4fb12d768178d682edb06c479c6ccbc42"
+        },
+        "loops": {
+          "fallback": 2,
+          "native": 64
+        },
+        "median_ns_per_call": {
+          "fallback": 6662083.0,
+          "native": 215630.203125
+        },
+        "paired_bootstrap": {
+          "ci95_high": 0.03307569726765624,
+          "ci95_low": 0.030728756205313082,
+          "median_native_over_fallback": 0.032171402043149964
+        },
+        "samples_ns_per_call": {
+          "fallback": [
+            6805375.0,
+            6738479.5,
+            6662083.0,
+            6731250.0,
+            6538395.5,
+            6610625.0,
+            6637666.5,
+            6613562.5,
+            6770354.0
+          ],
+          "native": [
+            220238.28125,
+            207065.09375,
+            215630.203125,
+            209611.984375,
+            217184.234375,
+            218651.03125,
+            201263.03125,
+            212767.578125,
+            216322.265625
+          ]
+        },
+        "schedule": [
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ],
+          [
+            "native",
+            "fallback"
+          ],
+          [
+            "fallback",
+            "native"
+          ]
+        ],
+        "schedule_balance": {
+          "all_pairs_valid": true,
+          "fallback_first": 4,
+          "is_counterbalanced": true,
+          "native_first": 5
+        }
+      },
+      "route": "series.map",
+      "route_verified": true,
+      "size": 100000
+    }
+  ],
+  "configuration": {
+    "counterbalanced_pairs": true,
+    "gc_disabled_during_samples": true,
+    "max_ci_width_fraction": 0.25,
+    "minimum_sample_target_ms": 10.0,
+    "near_floor_multiple": 5.0,
+    "repetitions": 9,
+    "seed": 20260715,
+    "sizes": [
+      1,
+      10,
+      100,
+      1000,
+      10000,
+      100000
+    ]
+  },
+  "elapsed_ns": 22868780792,
+  "generated_at_unix_ns": 1784126775981793000,
+  "null_call_floor": {
+    "loops": 1048576,
+    "median_ns_per_call": 16.86537265777588,
+    "samples_ns_per_call": [
+      16.43359661102295,
+      16.86537265777588,
+      16.750733375549316,
+      17.00619888305664,
+      17.112056732177734,
+      16.586342811584473,
+      17.024874687194824,
+      16.553203582763672,
+      17.009973526000977
+    ]
+  },
+  "provenance": {
+    "build_report": {
+      "accepted_native_count": 1,
+      "native_build_status": "built",
+      "path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/reports/build.json",
+      "rejected_native_count": 0,
+      "sha256": "0596d94e2af8ed21b24945a56f3e92f6eae6385aecf53718b26f1b576ea463b1",
+      "status": "built"
+    },
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "check_report": {
+      "path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/reports/check.json",
+      "routes": {
+        "bench_app.kernels.series_map": "native-plugin:rextio-pandas"
+      },
+      "sha256": "42890478616f96c333322bbe5ca5311cead01f0cbcb06418b354546be6e05d01"
+    },
+    "check_report_sha256": "42890478616f96c333322bbe5ca5311cead01f0cbcb06418b354546be6e05d01",
+    "claimed_native_routes": {
+      "bench_app.kernels.series_map": "native-plugin:rextio-pandas"
+    },
+    "compile_ns": 8307284416,
+    "core_direct_url": {
+      "dir_info": {
+        "editable": true
+      },
+      "url": "file:///Volumes/Data/workspace/rextio/rextio-core-next"
+    },
+    "core_dirty": false,
+    "core_import_file": "/Volumes/Data/workspace/rextio/rextio-core-next/src/rextio/__init__.py",
+    "core_install_mode": "editable",
+    "core_sha": "2bd1d1da0cf59e97d1659606bcb1ec12491e032c",
+    "generated_python_dir": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/generated/python",
+    "harness_manifest_sha256": "4ee25ad6314deabf4298bad4f02cd64d4fc1c08bd1793585af7d0938c9982163",
+    "machine": "arm64",
+    "native_artifact": {
+      "path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/generated/python/_rextio_native.cpython-311-darwin.so",
+      "sha256": "13d9666911e71e0a2ec77d32ca8c9e0d36699cdb817b7b79f641f1470781df7d"
+    },
+    "numpy": "2.3.5",
+    "pandas": "2.3.3",
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "plugin_api_version": "1.3",
+    "plugin_direct_url": {
+      "dir_info": {
+        "editable": true
+      },
+      "url": "file:///Volumes/Data/workspace/rextio/.octo/worktrees/WP-5"
+    },
+    "plugin_dirty": false,
+    "plugin_import_file": "/Volumes/Data/workspace/rextio/.octo/worktrees/WP-5/src/rextio_pandas/__init__.py",
+    "plugin_install_mode": "editable",
+    "plugin_sha": "152ff9a0457ae4b4d83bfa2b21429cfee784a931",
+    "processor": "arm",
+    "python": "3.11.15 (main, Mar  3 2026, 00:52:57) [Clang 21.0.0 (clang-2100.0.123.102)]",
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "selected_entry_points": [
+      {
+        "dist": "rextio-pandas",
+        "name": "rextio-pandas",
+        "value": "rextio_pandas.plugin:plugin"
+      }
+    ],
+    "timing_imports": {
+      "kernels": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/build/python/bench_app/kernels.py",
+      "native_module": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/build/python/_rextio_native.cpython-311-darwin.so",
+      "native_module_matches_build_artifact": true
+    }
+  },
+  "schema": 4,
+  "smoke": false,
+  "sustained_break_even": {
+    "series.map": 1000
+  },
+  "sustained_break_even_definition": "smallest measured Series size whose paired-bootstrap 95% CI is wholly below 1.0 and remains so at every larger measured Series size, with every required larger cell headline-eligible; not interpolated"
+}

@@ -113,14 +113,21 @@ _AUTHORITY_GLOBALS: dict[str, dict[str, tuple]] = {
     },
     # The imported frame_apply function loads only these three canonical
     # pandas.core.apply members; the drift test re-derives them from live
-    # bytecode so an added LOAD_GLOBAL cannot escape the identity checks.
+    # bytecode so an added LOAD_GLOBAL cannot escape the identity checks. Unlike
+    # ``module_attrs`` (whose canonical authority lives in an independently named
+    # module, e.g. ``pandas.core.dtypes.base`` for ``series_to_numpy``), these
+    # three members live in ``pandas.core.apply`` itself. Re-importing that same
+    # module and comparing identity would be a self-comparison that any
+    # module-attribute replacement trivially passes, so each is instead validated
+    # against an independently *frozen* authority (see ``module_authorities``).
     "apply_frame_apply": {
         "builtins": (),
         "modules": (),
-        "module_attrs": (
-            ("FrameColumnApply", "pandas.core.apply", "FrameColumnApply"),
-            ("FrameRowApply", "pandas.core.apply", "FrameRowApply"),
-            ("reconstruct_func", "pandas.core.apply", "reconstruct_func"),
+        "module_attrs": (),
+        "module_authorities": (
+            ("FrameColumnApply", "frame_column_apply"),
+            ("FrameRowApply", "frame_row_apply"),
+            ("reconstruct_func", "reconstruct_func"),
         ),
         "import_from": (),
     },
@@ -128,14 +135,66 @@ _AUTHORITY_GLOBALS: dict[str, dict[str, tuple]] = {
 _NO_DEFAULT_MODULE = "pandas._libs.lib"
 _NO_DEFAULT_ATTR = "no_default"
 
+# Independently frozen authorities for the three ``pandas.core.apply`` members
+# that ``frame_apply`` loads. ``reconstruct_func`` is a plain module-level
+# function, validated by a full frozen code-digest function authority.
+# ``FrameColumnApply``/``FrameRowApply`` are classes, validated by a frozen
+# type-tagged structural digest over the live class identity, MRO chain, the
+# ``axis`` selector, and the code of the property getters + plain methods that
+# drive the covered ``DataFrame.apply(axis=1)`` path (``axis`` is 1 for
+# ``FrameColumnApply`` and 0 for ``FrameRowApply``). None of these is derived
+# from the live mutable ``pandas.core.apply`` binding at lowering or runtime; the
+# expected digests are frozen constants, and drift tests re-derive them from the
+# pinned package so a version bump fails loudly rather than silently trusting.
+_APPLY_CLASS_AUTHORITIES: dict[str, dict] = {
+    "frame_column_apply": {
+        "attr": "FrameColumnApply",
+        "int_attrs": ("axis",),
+        "property_methods": ("result_columns", "result_index", "series_generator"),
+        "function_methods": ("wrap_results_for_axis",),
+    },
+    "frame_row_apply": {
+        "attr": "FrameRowApply",
+        "int_attrs": ("axis",),
+        "property_methods": ("result_columns", "result_index", "series_generator"),
+        "function_methods": ("wrap_results_for_axis",),
+    },
+}
+_APPLY_FUNCTION_AUTHORITIES: dict[str, dict[str, str]] = {
+    "reconstruct_func": {
+        "attr": "reconstruct_func",
+        "module": "pandas.core.apply",
+        "qualname": "reconstruct_func",
+    },
+}
+# Frozen known-good digests (CPython 3.11 / pandas 2.3.3). Class digests are the
+# structural class-authority digest; the function digest is the canonical code
+# digest. Captured from the pinned package and asserted by drift tests.
+_APPLY_CLASS_DIGESTS = {
+    "frame_column_apply": "e95b5a9a8d4beeabdcc25d3240bc73b49d2d420b90ac9522fc75655764782f7f",
+    "frame_row_apply": "a3e58d688739cc726a601e62dd34f46cff28b1e57c731756096bd2421907826c",
+}
+_APPLY_FUNCTION_DIGESTS = {
+    "reconstruct_func": "08c2f2b0acd3ae10826d7ef7cb654735fd8ace9ed4d9d09b78cf45e014eba27a",
+}
+_CLASS_DIGEST_CONST = {
+    "frame_column_apply": "__RXTPD_FRAME_COLUMN_APPLY_CLASS_DIGEST",
+    "frame_row_apply": "__RXTPD_FRAME_ROW_APPLY_CLASS_DIGEST",
+}
+_FUNCTION_DIGEST_CONST = {
+    "reconstruct_func": "__RXTPD_RECONSTRUCT_FUNC_DIGEST",
+}
+
 
 def _encode_value(value: object, out: list[bytes]) -> None:
     """Type-tagged, length-delimited encoding of one allowed const value.
 
     Mirrors the generated Rust encoder exactly; accepts only the builtin const
-    types present in the pinned code objects and rejects everything else.
+    types present in the pinned code objects (including nested code objects from
+    comprehensions/lambdas, encoded recursively) and rejects everything else.
     """
     import struct
+    import types
     from typing import cast
 
     value_type = type(value)
@@ -153,19 +212,19 @@ def _encode_value(value: object, out: list[bytes]) -> None:
         out.append(b"t" + struct.pack("<I", len(items)))
         for item in items:
             _encode_value(item, out)
+    elif value_type is types.CodeType:
+        # Nested code objects (comprehensions, nested defs) are folded into the
+        # digest recursively so a replacement cannot hide behavior inside them.
+        out.append(b"c")
+        _encode_code(cast("types.CodeType", value), out)
     else:
         raise TypeError(f"disallowed const type {value_type!r}")
 
 
-def compute_authority_code_digest(function: object) -> str:
-    """Python mirror of the Rust canonical code digest (for capture + tests)."""
+def _encode_code(code: object, out: list[bytes]) -> None:
+    """Type-tagged canonical encoding of one code object's executable fields."""
     import struct
-    import types
 
-    if not isinstance(function, types.FunctionType):
-        raise TypeError("pinned pandas descriptor is not a plain function")
-    code = function.__code__
-    out: list[bytes] = []
     for name in (
         "co_argcount",
         "co_posonlyargcount",
@@ -189,9 +248,79 @@ def compute_authority_code_digest(function: object) -> str:
     for name in ("co_name", "co_qualname"):
         encoded = getattr(code, name).encode("utf-8")
         out.append(b"s" + struct.pack("<I", len(encoded)) + encoded)
-    out.append(b"t" + struct.pack("<I", len(code.co_consts)))
-    for const in code.co_consts:
+    out.append(b"t" + struct.pack("<I", len(code.co_consts)))  # type: ignore[attr-defined]
+    for const in code.co_consts:  # type: ignore[attr-defined]
         _encode_value(const, out)
+
+
+def compute_authority_code_digest(function: object) -> str:
+    """Python mirror of the Rust canonical code digest (for capture + tests)."""
+    import types
+
+    if not isinstance(function, types.FunctionType):
+        raise TypeError("pinned pandas descriptor is not a plain function")
+    out: list[bytes] = []
+    _encode_code(function.__code__, out)
+    return hashlib.sha256(b"".join(out)).hexdigest()
+
+
+def compute_authority_class_digest(cls: object, spec: dict) -> str:
+    """Python mirror of the Rust frozen class-authority digest.
+
+    Folds the live class identity, its full MRO chain, the named integer class
+    attributes (the axis selector), and the code digests of the named property
+    getters and plain-function methods into a single type-tagged SHA-256. Because
+    every value is read from the *live* class, any replacement that changes the
+    class name/module, its base hierarchy, the axis constant, or the body of any
+    covered method yields a different digest than the frozen authority constant.
+    """
+    import struct
+    import types
+
+    if not isinstance(cls, type):
+        raise TypeError("pinned pandas authority is not a class")
+
+    def _push_str(text: str) -> None:
+        encoded = text.encode("utf-8")
+        out.append(b"s" + struct.pack("<I", len(encoded)) + encoded)
+
+    out: list[bytes] = [b"C"]
+    _push_str(cls.__module__)
+    _push_str(cls.__qualname__)
+    mro = cls.__mro__
+    out.append(b"m" + struct.pack("<I", len(mro)))
+    for base in mro:
+        _push_str(base.__module__)
+        _push_str(base.__qualname__)
+    class_dict = cls.__dict__
+    int_attrs = spec["int_attrs"]
+    out.append(b"I" + struct.pack("<I", len(int_attrs)))
+    for name in int_attrs:
+        _push_str(name)
+        value = class_dict[name]
+        if type(value) is not int:
+            raise TypeError(f"class attr {name} is not an exact int")
+        out.append(b"i" + value.to_bytes(8, "little", signed=True))
+    property_methods = spec["property_methods"]
+    out.append(b"P" + struct.pack("<I", len(property_methods)))
+    for name in property_methods:
+        _push_str(name)
+        member = class_dict[name]
+        if type(member) is not property:
+            raise TypeError(f"class member {name} is not an exact property")
+        if member.fset is not None or member.fdel is not None:
+            raise TypeError(f"property {name} is not read-only")
+        if not isinstance(member.fget, types.FunctionType):
+            raise TypeError(f"property {name} getter is not a plain function")
+        _push_str(compute_authority_code_digest(member.fget))
+    function_methods = spec["function_methods"]
+    out.append(b"F" + struct.pack("<I", len(function_methods)))
+    for name in function_methods:
+        _push_str(name)
+        member = class_dict[name]
+        if not isinstance(member, types.FunctionType):
+            raise TypeError(f"class member {name} is not a plain function")
+        _push_str(compute_authority_code_digest(member))
     return hashlib.sha256(b"".join(out)).hexdigest()
 
 
@@ -209,6 +338,13 @@ _DIGEST_CONST = {
 # forge executable identity.
 _RUST_IDENTITY_FUNCTIONS = r"""fn __rxtpd_type_error(message: &'static str) -> pyo3::PyErr {
     pyo3::exceptions::PyTypeError::new_err(message)
+}
+
+fn __rxtpd_push_str(buffer: &mut Vec<u8>, text: &str) {
+    let bytes = text.as_bytes();
+    buffer.push(b's');
+    buffer.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    buffer.extend_from_slice(bytes);
 }
 
 fn __rxtpd_encode_value(
@@ -253,15 +389,23 @@ fn __rxtpd_encode_value(
         }
         return Ok(());
     }
+    // Nested code objects (comprehensions / nested defs stored as consts) are
+    // folded in recursively so behavior cannot hide inside them.
+    let code_type = value.py().import("types")?.getattr("CodeType")?;
+    if value.is_exact_instance(&code_type) {
+        buffer.push(b'c');
+        __rxtpd_encode_code(value, buffer, error)?;
+        return Ok(());
+    }
     Err(__rxtpd_type_error(error))
 }
 
-fn __rxtpd_code_digest(
+fn __rxtpd_encode_code(
     code: &pyo3::Bound<'_, pyo3::PyAny>,
+    buffer: &mut Vec<u8>,
     error: &'static str,
-) -> pyo3::PyResult<String> {
+) -> pyo3::PyResult<()> {
     use pyo3::types::{PyAnyMethods, PyString, PyTuple, PyTupleMethods};
-    let mut buffer: Vec<u8> = Vec::new();
     for name in [
         "co_argcount",
         "co_posonlyargcount",
@@ -321,17 +465,30 @@ fn __rxtpd_code_digest(
     buffer.push(b't');
     buffer.extend_from_slice(&(consts.len() as u32).to_le_bytes());
     for item in consts.iter() {
-        __rxtpd_encode_value(&item, &mut buffer, error)?;
+        __rxtpd_encode_value(&item, buffer, error)?;
     }
+    Ok(())
+}
+
+fn __rxtpd_sha256_hex(buffer: &[u8]) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
-    hasher.update(&buffer);
+    hasher.update(buffer);
     let digest = hasher.finalize();
     let mut hex = String::with_capacity(64);
     for byte in digest.iter() {
         hex.push_str(&format!("{:02x}", byte));
     }
-    Ok(hex)
+    hex
+}
+
+fn __rxtpd_code_digest(
+    code: &pyo3::Bound<'_, pyo3::PyAny>,
+    error: &'static str,
+) -> pyo3::PyResult<String> {
+    let mut buffer: Vec<u8> = Vec::new();
+    __rxtpd_encode_code(code, &mut buffer, error)?;
+    Ok(__rxtpd_sha256_hex(&buffer))
 }"""
 
 
@@ -413,6 +570,19 @@ def _globals_rs(spec: dict) -> str:
             "        if !bound.is(&canonical) {\n"
             "            return Err(__rxtpd_type_error(error));\n"
             "        }\n"
+            "    }\n"
+        )
+    for name, validator_key in spec.get("module_authorities", ()):
+        # The bound object is the live ``module_dict`` member that the pinned
+        # frame_apply loads. It is NOT compared back to a re-import of the same
+        # mutable module (a self-comparison); it is validated against its own
+        # independently frozen authority (class structural digest or function
+        # code digest), so a same-module replacement is rejected.
+        blocks.append(
+            "    {\n"
+            "        let bound = module_dict.get_item(" + _rust_string(name) + ")"
+            ".map_err(|_| __rxtpd_type_error(error))?;\n"
+            "        __rxtpd_validate_" + validator_key + "(py, &bound)?;\n"
             "    }\n"
         )
     for impmod, attr in spec["import_from"]:
@@ -512,6 +682,173 @@ def _rust_method_validators(error: dict[str, str]) -> str:
     )
 
 
+def _function_authority_validator_rs(key: str, error_expr: str) -> str:
+    """Frozen code-digest function authority for a ``pandas.core.apply`` member.
+
+    Validates executable identity (exact function type, module, qualname, empty
+    closure/freevars, ``None`` kw/positional defaults, and the frozen code
+    digest) of the actual bound object -- never a self-comparison to the live
+    mutable module attribute.
+    """
+    spec = _APPLY_FUNCTION_AUTHORITIES[key]
+    const = _FUNCTION_DIGEST_CONST[key]
+    module = _rust_string(spec["module"])
+    qualname = _rust_string(spec["qualname"])
+    return (
+        "fn __rxtpd_validate_" + key + "(\n"
+        "    py: pyo3::Python<'_>,\n"
+        "    object: &pyo3::Bound<'_, pyo3::PyAny>,\n"
+        ") -> pyo3::PyResult<()> {\n"
+        "    use pyo3::types::PyAnyMethods;\n"
+        "    let error = " + error_expr + ";\n"
+        '    let types_module = py.import("types")?;\n'
+        '    if !object.is_exact_instance(&types_module.getattr("FunctionType")?) {\n'
+        "        return Err(__rxtpd_type_error(error));\n    }\n"
+        '    if object.getattr("__module__")?.extract::<String>().map_err(|_| '
+        "__rxtpd_type_error(error))? != " + module + " {\n"
+        "        return Err(__rxtpd_type_error(error));\n    }\n"
+        '    if object.getattr("__qualname__")?.extract::<String>().map_err(|_| '
+        "__rxtpd_type_error(error))? != " + qualname + " {\n"
+        "        return Err(__rxtpd_type_error(error));\n    }\n"
+        "    let module_dict = py.import(" + module + ')?.getattr("__dict__")?;\n'
+        '    if !object.getattr("__globals__")?.is(&module_dict) {\n'
+        "        return Err(__rxtpd_type_error(error));\n    }\n"
+        '    if !object.getattr("__closure__")?.is_none() {\n'
+        "        return Err(__rxtpd_type_error(error));\n    }\n"
+        '    let code = object.getattr("__code__")?;\n'
+        '    if code.getattr("co_freevars")?.len()? != 0 {\n'
+        "        return Err(__rxtpd_type_error(error));\n    }\n"
+        "    if __rxtpd_code_digest(&code, error)? != " + const + " {\n"
+        "        return Err(__rxtpd_type_error(error));\n    }\n"
+        '    if !object.getattr("__kwdefaults__")?.is_none() {\n'
+        "        return Err(__rxtpd_type_error(error));\n    }\n"
+        '    if !object.getattr("__defaults__")?.is_none() {\n'
+        "        return Err(__rxtpd_type_error(error));\n    }\n"
+        "    Ok(())\n}\n"
+    )
+
+
+def _class_authority_validator_rs(key: str, error_expr: str) -> str:
+    """Frozen structural class authority for a ``pandas.core.apply`` class.
+
+    Rebuilds -- from the *live* class -- a type-tagged digest over the class
+    identity, full MRO chain, integer class attributes (the axis selector), and
+    the code digests of the named read-only property getters and plain methods,
+    then compares it to a frozen constant. A same-module class replacement that
+    changes any of these is rejected; there is no comparison to the live module
+    attribute.
+    """
+    spec = _APPLY_CLASS_AUTHORITIES[key]
+    const = _CLASS_DIGEST_CONST[key]
+    parts = [
+        "fn __rxtpd_validate_" + key + "(\n",
+        "    py: pyo3::Python<'_>,\n",
+        "    object: &pyo3::Bound<'_, pyo3::PyAny>,\n",
+        ") -> pyo3::PyResult<()> {\n",
+        "    use pyo3::types::{PyAnyMethods, PyInt, PyType, PyTuple, PyTupleMethods};\n",
+        "    let error = " + error_expr + ";\n",
+        '    let types_module = py.import("types")?;\n',
+        '    let function_type = types_module.getattr("FunctionType")?;\n',
+        '    let property_type = py.import("builtins")?.getattr("property")?;\n',
+        "    if object.cast::<PyType>().is_err() {\n",
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        "    let mut buffer: Vec<u8> = Vec::new();\n",
+        "    buffer.push(b'C');\n",
+        '    __rxtpd_push_str(&mut buffer, &object.getattr("__module__")?'
+        ".extract::<String>().map_err(|_| __rxtpd_type_error(error))?);\n",
+        '    __rxtpd_push_str(&mut buffer, &object.getattr("__qualname__")?'
+        ".extract::<String>().map_err(|_| __rxtpd_type_error(error))?);\n",
+        '    let mro_field = object.getattr("__mro__")?;\n',
+        "    let mro = mro_field.cast::<PyTuple>().map_err(|_| __rxtpd_type_error(error))?;\n",
+        "    buffer.push(b'm');\n",
+        "    buffer.extend_from_slice(&(mro.len() as u32).to_le_bytes());\n",
+        "    for base in mro.iter() {\n",
+        '        __rxtpd_push_str(&mut buffer, &base.getattr("__module__")?'
+        ".extract::<String>().map_err(|_| __rxtpd_type_error(error))?);\n",
+        '        __rxtpd_push_str(&mut buffer, &base.getattr("__qualname__")?'
+        ".extract::<String>().map_err(|_| __rxtpd_type_error(error))?);\n",
+        "    }\n",
+        '    let class_dict = object.getattr("__dict__")?;\n',
+        "    buffer.push(b'I');\n",
+        "    buffer.extend_from_slice(&(" + str(len(spec["int_attrs"])) + "u32).to_le_bytes());\n",
+    ]
+    for name in spec["int_attrs"]:
+        rn = _rust_string(name)
+        parts.append(
+            "    {\n"
+            "        __rxtpd_push_str(&mut buffer, " + rn + ");\n"
+            "        let value = class_dict.get_item(" + rn + ")"
+            ".map_err(|_| __rxtpd_type_error(error))?;\n"
+            "        if !value.is_exact_instance_of::<PyInt>() {\n"
+            "            return Err(__rxtpd_type_error(error));\n        }\n"
+            "        let number: i64 = value.extract().map_err(|_| __rxtpd_type_error(error))?;\n"
+            "        buffer.push(b'i');\n"
+            "        buffer.extend_from_slice(&number.to_le_bytes());\n"
+            "    }\n"
+        )
+    parts.append(
+        "    buffer.push(b'P');\n"
+        "    buffer.extend_from_slice(&("
+        + str(len(spec["property_methods"]))
+        + "u32).to_le_bytes());\n"
+    )
+    for name in spec["property_methods"]:
+        rn = _rust_string(name)
+        parts.append(
+            "    {\n"
+            "        __rxtpd_push_str(&mut buffer, " + rn + ");\n"
+            "        let member = class_dict.get_item(" + rn + ")"
+            ".map_err(|_| __rxtpd_type_error(error))?;\n"
+            "        if !member.is_exact_instance(&property_type) {\n"
+            "            return Err(__rxtpd_type_error(error));\n        }\n"
+            '        if !member.getattr("fset")?.is_none() '
+            '|| !member.getattr("fdel")?.is_none() {\n'
+            "            return Err(__rxtpd_type_error(error));\n        }\n"
+            '        let fget = member.getattr("fget")?;\n'
+            "        if !fget.is_exact_instance(&function_type) {\n"
+            "            return Err(__rxtpd_type_error(error));\n        }\n"
+            '        let code = fget.getattr("__code__")?;\n'
+            "        __rxtpd_push_str(&mut buffer, &__rxtpd_code_digest(&code, error)?);\n"
+            "    }\n"
+        )
+    parts.append(
+        "    buffer.push(b'F');\n"
+        "    buffer.extend_from_slice(&("
+        + str(len(spec["function_methods"]))
+        + "u32).to_le_bytes());\n"
+    )
+    for name in spec["function_methods"]:
+        rn = _rust_string(name)
+        parts.append(
+            "    {\n"
+            "        __rxtpd_push_str(&mut buffer, " + rn + ");\n"
+            "        let member = class_dict.get_item(" + rn + ")"
+            ".map_err(|_| __rxtpd_type_error(error))?;\n"
+            "        if !member.is_exact_instance(&function_type) {\n"
+            "            return Err(__rxtpd_type_error(error));\n        }\n"
+            '        let code = member.getattr("__code__")?;\n'
+            "        __rxtpd_push_str(&mut buffer, &__rxtpd_code_digest(&code, error)?);\n"
+            "    }\n"
+        )
+    parts.append(
+        "    if __rxtpd_sha256_hex(&buffer) != " + const + " {\n"
+        "        return Err(__rxtpd_type_error(error));\n    }\n"
+        "    Ok(())\n}\n"
+    )
+    return "".join(parts)
+
+
+def _apply_module_authority_validators(error: dict[str, str]) -> str:
+    frame_error = error["frame_method"]
+    validators = [
+        _function_authority_validator_rs(key, frame_error) for key in _APPLY_FUNCTION_AUTHORITIES
+    ]
+    validators += [
+        _class_authority_validator_rs(key, frame_error) for key in _APPLY_CLASS_AUTHORITIES
+    ]
+    return "\n".join(validators)
+
+
 _RUST_SIMPLE_ESCAPES = {
     '"': '\\"',
     "\\": "\\\\",
@@ -554,8 +891,12 @@ def boundary_helpers() -> str:
     frame_apply_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["frame_apply"])
     frame_to_numpy_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["frame_to_numpy"])
     apply_frame_apply_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["apply_frame_apply"])
+    reconstruct_func_digest = _rust_string(_APPLY_FUNCTION_DIGESTS["reconstruct_func"])
+    frame_column_apply_class_digest = _rust_string(_APPLY_CLASS_DIGESTS["frame_column_apply"])
+    frame_row_apply_class_digest = _rust_string(_APPLY_CLASS_DIGESTS["frame_row_apply"])
     identity_functions = _RUST_IDENTITY_FUNCTIONS
     method_validators = _rust_method_validators(error)
+    module_authority_validators = _apply_module_authority_validators(error)
     version = _rust_string(PINNED_PANDAS_VERSION)
     numpy_version = _rust_string(PINNED_NUMPY_VERSION)
     py_major, py_minor = PINNED_PYTHON
@@ -582,10 +923,18 @@ const __RXTPD_SERIES_TO_NUMPY_DIGEST: &str = {series_to_numpy_digest};
 const __RXTPD_FRAME_APPLY_DIGEST: &str = {frame_apply_digest};
 const __RXTPD_FRAME_TO_NUMPY_DIGEST: &str = {frame_to_numpy_digest};
 const __RXTPD_APPLY_FRAME_APPLY_DIGEST: &str = {apply_frame_apply_digest};
+// The three ``pandas.core.apply`` members ``frame_apply`` loads are validated
+// against these independently frozen authorities -- a function code digest and
+// two structural class digests -- never by self-comparison to the same module.
+const __RXTPD_RECONSTRUCT_FUNC_DIGEST: &str = {reconstruct_func_digest};
+const __RXTPD_FRAME_COLUMN_APPLY_CLASS_DIGEST: &str = {frame_column_apply_class_digest};
+const __RXTPD_FRAME_ROW_APPLY_CLASS_DIGEST: &str = {frame_row_apply_class_digest};
 
 {identity_functions}
 
 {method_validators}
+
+{module_authority_validators}
 
 fn __rxtpd_is_exact_numpy_dtype(
     py: pyo3::Python<'_>,

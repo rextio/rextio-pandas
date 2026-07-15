@@ -603,6 +603,68 @@ finally:
     assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["frame_method"]]
 
 
+@pytest.mark.parametrize(
+    "setup",
+    [
+        # Replace pandas.core.apply.FrameColumnApply (loaded by the pinned
+        # frame_apply for the covered axis=1 route) with a same-module subclass
+        # that overrides a covered method. The prior self-comparison check
+        # (re-import pandas.core.apply and compare the same attribute to itself)
+        # accepted this; the frozen class-structural authority rejects it.
+        (
+            "import pandas.core.apply as apply_mod\n"
+            "class _Evil(apply_mod.FrameColumnApply):\n"
+            "    def wrap_results_for_axis(self, results, res_index):\n"
+            "        return super().wrap_results_for_axis(results, res_index)\n"
+            "apply_mod.FrameColumnApply = _Evil\n"
+            "assert apply_mod.FrameColumnApply is "
+            "__import__('pandas.core.apply', fromlist=['FrameColumnApply']).FrameColumnApply"
+        ),
+        # Same for FrameRowApply (the axis=0 dispatch class frame_apply loads).
+        (
+            "import pandas.core.apply as apply_mod\n"
+            "class _Evil(apply_mod.FrameRowApply):\n"
+            "    def wrap_results_for_axis(self, results, res_index):\n"
+            "        return super().wrap_results_for_axis(results, res_index)\n"
+            "apply_mod.FrameRowApply = _Evil"
+        ),
+        # Replace pandas.core.apply.reconstruct_func with a same-module function
+        # of a different code object; the frozen code digest rejects it.
+        (
+            "import pandas.core.apply as apply_mod\n"
+            "apply_mod.reconstruct_func = lambda func, **kwargs: (None, func, None, None)"
+        ),
+    ],
+)
+def test_same_module_apply_authority_replacement_is_rejected(
+    project: CertifiedProject, setup: str
+) -> None:
+    # Regression for the fourth adversarial follow-up: the three
+    # ``pandas.core.apply`` members ``frame_apply`` loads
+    # (``FrameColumnApply``/``FrameRowApply``/``reconstruct_func``) are each
+    # validated against an independently frozen authority, not compared back to a
+    # re-import of the same mutable module. A same-module replacement -- which the
+    # covered axis=1 native route never executes but the ordinary pandas fallback
+    # would -- must produce the stable DataFrame ``TypeError`` instead of letting
+    # the compiled loop diverge from tampered fallback semantics.
+    body = f"""
+import pandas as pd
+from pandas_app.frames import apply_two
+frame = pd.DataFrame({{"left": [1.0, 2.0], "right": [3.0, 4.0]}}, dtype="float64")
+{setup}
+try:
+    apply_two(frame)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("same-module apply authority replacement was accepted")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["frame_method"]]
+
+
 def test_arrow_backed_frame_rejected_when_pyarrow_available(project: CertifiedProject) -> None:
     if importlib.util.find_spec("pyarrow") is None:
         pytest.skip("pyarrow is not installed; Arrow-backed storage cannot be constructed")

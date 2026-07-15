@@ -148,12 +148,47 @@
   known-good code digest (type-tagged canonical encoding hashed with `sha2`; no
   Python `repr`/`hashlib`), exact function type/module/qualname, empty closure
   and zero freevars, `None` `__kwdefaults__`, structural `__defaults__`, and
-  identity checks for its own execution-relevant global bindings
-  (`FrameColumnApply`, `FrameRowApply`, `reconstruct_func`). The import-target
+  checks of its own execution-relevant global bindings (`FrameColumnApply`,
+  `FrameRowApply`, `reconstruct_func`). The import-target
   validator key is derived from the frozen authority metadata so a target and
   its canonical authority cannot drift apart. Adds a real-Cargo regression that
   installs a metadata-and-globals-matching forged `frame_apply` and asserts the
   stable DataFrame `TypeError`, a unit test proving the forged code object
   changes the digest, and re-derives the new digest and global spec from the
   live pinned package so drift fails loudly. Preserves the prior custom-`repr`,
-  structural-default, sentinel, and mutable-binding regressions.
+  structural-default, sentinel, and mutable-binding regressions. (Those three
+  `pandas.core.apply` binding checks were only equal-to-themselves comparisons,
+  not independent authorities; the fourth follow-up below replaces them.)
+
+### Fourth adversarial post-review follow-up
+
+- Replace the self-comparison in `frame_apply`'s `pandas.core.apply` global
+  checks with genuinely independent frozen authorities. The prior check obtained
+  each of `FrameColumnApply`, `FrameRowApply`, and `reconstruct_func` from the
+  validated function's `__globals__` (which *is* `pandas.core.apply.__dict__`)
+  and compared it for identity to the same attribute re-read from a fresh import
+  of `pandas.core.apply` — the same object on both sides, so any same-module
+  replacement passed. Because the covered `DataFrame.apply(axis=1)` native route
+  validates but never executes `frame_apply`, such a replacement changed ordinary
+  pandas/fallback behavior while native lowering kept the compiled semantics.
+  Now `reconstruct_func` is validated by a full frozen code-digest function
+  authority (exact function type, module, qualname, empty closure/zero freevars,
+  `None` kw/positional defaults, and the frozen type-tagged code digest), and
+  `FrameColumnApply`/`FrameRowApply` by a frozen type-tagged *structural class
+  digest* rebuilt from the live class — its identity, full MRO chain, the `axis`
+  selector, and the code digests of the read-only property getters
+  (`result_columns`, `result_index`, `series_generator`) and the plain method
+  (`wrap_results_for_axis`) that drive the axis dispatch — so a same-module
+  replacement that changes the class name/hierarchy, the axis constant, or any
+  covered method body is rejected. A bare `__module__`/`__qualname__` check is
+  not relied upon. The shared canonical code encoder now folds nested code
+  objects (comprehensions/nested defs) into the digest recursively, and none of
+  the expected digests is derived from the live mutable binding at lowering or
+  runtime. Adds real-Cargo regressions replacing each of the three members in a
+  fresh native process (each asserting the stable DataFrame `TypeError`), unit
+  characterizations that a same-module class/function replacement changes the
+  frozen digest, and drift tests that re-derive the class/function authority
+  digests from the pinned package so a version bump fails loudly. Preserves the
+  frozen `frame_apply` code-digest validation and all prior custom-`repr`,
+  structural-default, sentinel, globals, import-target, artifact, and scheduling
+  hardening.

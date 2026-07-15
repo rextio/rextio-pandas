@@ -28,11 +28,16 @@ from rextio_pandas.claim.map_apply import DATAFRAME_APPLY_RULE
 from rextio_pandas.diagnostics import FRAME_F64, SERIES_F64
 from rextio_pandas.plugin import RextioPandasPlugin
 from rextio_pandas.rust_snippets.map_apply import (
+    _APPLY_CLASS_AUTHORITIES,
+    _APPLY_CLASS_DIGESTS,
+    _APPLY_FUNCTION_AUTHORITIES,
+    _APPLY_FUNCTION_DIGESTS,
     _AUTHORITY_CODE_DIGESTS,
     _AUTHORITY_DEFAULTS,
     _AUTHORITY_GLOBALS,
     _rust_string,
     boundary_helpers,
+    compute_authority_class_digest,
     compute_authority_code_digest,
     dataframe_apply_helpers,
 )
@@ -489,12 +494,149 @@ def test_global_binding_specs_match_live_bytecode() -> None:
             set(spec["builtins"])
             | {name for name, _ in spec["modules"]}
             | {name for name, _, _ in spec["module_attrs"]}
+            | {name for name, _ in spec.get("module_authorities", ())}
         )
         assert load_globals == covered, (key, load_globals, covered)
         imports = [
             ins.argval for ins in dis.get_instructions(function) if ins.opname == "IMPORT_NAME"
         ]
         assert imports == [mod for mod, _ in spec["import_from"]], key
+
+
+def _live_apply_module_authorities() -> dict[str, object]:
+    import pandas.core.apply as apply_mod
+
+    live: dict[str, object] = {}
+    for key, spec in _APPLY_CLASS_AUTHORITIES.items():
+        live[key] = getattr(apply_mod, spec["attr"])
+    for key, spec in _APPLY_FUNCTION_AUTHORITIES.items():
+        live[key] = getattr(apply_mod, spec["attr"])
+    return live
+
+
+def test_apply_module_authorities_are_independently_frozen_not_self_compared() -> None:
+    # The three ``pandas.core.apply`` members that ``frame_apply`` loads
+    # (FrameColumnApply/FrameRowApply for axis dispatch, reconstruct_func) must be
+    # validated against frozen authorities, not re-imported from the same mutable
+    # module and compared to themselves.
+    source = boundary_helpers()
+    # Independent validators are generated and embedded.
+    for fn in (
+        "fn __rxtpd_validate_frame_column_apply(",
+        "fn __rxtpd_validate_frame_row_apply(",
+        "fn __rxtpd_validate_reconstruct_func(",
+    ):
+        assert fn in source
+    # apply_frame_apply's globals check delegates to those validators on the live
+    # bound member, never a self-comparison to a re-import of pandas.core.apply.
+    for name, key in (
+        ("FrameColumnApply", "frame_column_apply"),
+        ("FrameRowApply", "frame_row_apply"),
+        ("reconstruct_func", "reconstruct_func"),
+    ):
+        assert f'let bound = module_dict.get_item("{name}")' in source
+        assert f"__rxtpd_validate_{key}(py, &bound)?;" in source
+    # The old same-module self-comparison (import pandas.core.apply then getattr
+    # the same attribute and compare identity) must be gone for all three.
+    assert 'py.import("pandas.core.apply")?.getattr("FrameColumnApply")' not in source
+    assert 'py.import("pandas.core.apply")?.getattr("FrameRowApply")' not in source
+    assert 'py.import("pandas.core.apply")?.getattr("reconstruct_func")' not in source
+    # The frozen authority digests actually guard the members.
+    assert "const __RXTPD_RECONSTRUCT_FUNC_DIGEST: &str =" in source
+    assert "const __RXTPD_FRAME_COLUMN_APPLY_CLASS_DIGEST: &str =" in source
+    assert "const __RXTPD_FRAME_ROW_APPLY_CLASS_DIGEST: &str =" in source
+    assert f'"{_APPLY_FUNCTION_DIGESTS["reconstruct_func"]}"' in source
+    assert f'"{_APPLY_CLASS_DIGESTS["frame_column_apply"]}"' in source
+    assert f'"{_APPLY_CLASS_DIGESTS["frame_row_apply"]}"' in source
+    # The class authority folds in real executable behavior (method code digests
+    # via the shared canonical encoder), the axis selector, and the MRO chain --
+    # not a mere module/qualname check.
+    column_validator = source[source.index("fn __rxtpd_validate_frame_column_apply(") :]
+    column_validator = column_validator[: column_validator.index("\n}\n") + 3]
+    assert "__rxtpd_code_digest(&code, error)?" in column_validator
+    assert 'class_dict.get_item("axis")' in column_validator
+    assert 'object.getattr("__mro__")' in column_validator
+    assert "!= __RXTPD_FRAME_COLUMN_APPLY_CLASS_DIGEST" in column_validator
+
+
+def test_apply_module_authority_digests_match_pinned_pandas() -> None:
+    # Frozen class/function authority digests must equal the live pinned pandas so
+    # a version bump fails loudly rather than silently trusting a self-comparison.
+    live = _live_apply_module_authorities()
+    assert set(live) == set(_APPLY_CLASS_AUTHORITIES) | set(_APPLY_FUNCTION_AUTHORITIES)
+    for key, spec in _APPLY_CLASS_AUTHORITIES.items():
+        assert compute_authority_class_digest(live[key], spec) == _APPLY_CLASS_DIGESTS[key]
+    for key in _APPLY_FUNCTION_AUTHORITIES:
+        assert compute_authority_code_digest(live[key]) == _APPLY_FUNCTION_DIGESTS[key]
+
+
+def _class_digest_or_none(cls: object, spec: dict) -> str | None:
+    # Mirrors the generated Rust: a missing/wrong-typed member fails the check
+    # (``get_item`` error -> rejection) rather than yielding a valid digest.
+    try:
+        return compute_authority_class_digest(cls, spec)
+    except (TypeError, KeyError):
+        return None
+
+
+def test_same_module_class_replacement_is_rejected_by_the_frozen_class_digest() -> None:
+    # The reproduced defect at the authority layer. The old check compared the
+    # module attribute back to a re-import of the same module, so ANY replacement
+    # passed. The frozen structural digest instead distinguishes classes by axis
+    # selector + method code, so a same-module replacement (here modelled by the
+    # sibling apply class, whose ``axis`` and method bodies differ) is rejected.
+    import types
+
+    import pandas.core.apply as apply_mod
+
+    for key, spec in _APPLY_CLASS_AUTHORITIES.items():
+        original = getattr(apply_mod, spec["attr"])
+        assert compute_authority_class_digest(original, spec) == _APPLY_CLASS_DIGESTS[key]
+
+    column = _APPLY_CLASS_AUTHORITIES["frame_column_apply"]
+    row = _APPLY_CLASS_AUTHORITIES["frame_row_apply"]
+    # Cross-class replacement (FrameRowApply where FrameColumnApply is expected).
+    assert (
+        compute_authority_class_digest(apply_mod.FrameRowApply, column)
+        != _APPLY_CLASS_DIGESTS["frame_column_apply"]
+    )
+    assert (
+        compute_authority_class_digest(apply_mod.FrameColumnApply, row)
+        != _APPLY_CLASS_DIGESTS["frame_row_apply"]
+    )
+    # A same-module subclass override (inherits the covered members, so they are
+    # absent from its own ``__dict__``) is rejected, not silently accepted.
+    tampered = types.new_class("FrameColumnApply", (apply_mod.FrameColumnApply,))
+    tampered.__qualname__ = "FrameColumnApply"
+    assert "axis" not in tampered.__dict__
+    assert _class_digest_or_none(tampered, column) != _APPLY_CLASS_DIGESTS["frame_column_apply"]
+
+
+def test_same_module_reconstruct_func_replacement_changes_the_code_digest() -> None:
+    # Replacing ``pandas.core.apply.reconstruct_func`` with a same-module function
+    # of matching metadata but a different code object changes the frozen code
+    # digest that now guards it.
+    import types
+
+    import pandas.core.apply as apply_mod
+
+    original = apply_mod.reconstruct_func
+    assert compute_authority_code_digest(original) == _APPLY_FUNCTION_DIGESTS["reconstruct_func"]
+
+    def impostor(func, **kwargs):  # pragma: no cover - never executed
+        raise RuntimeError("impostor reconstruct_func executed")
+
+    forged = types.FunctionType(
+        impostor.__code__,
+        apply_mod.__dict__,
+        "reconstruct_func",
+        original.__defaults__,
+        original.__closure__,
+    )
+    forged.__module__ = "pandas.core.apply"
+    forged.__qualname__ = "reconstruct_func"
+    assert forged.__globals__ is apply_mod.__dict__
+    assert compute_authority_code_digest(forged) != _APPLY_FUNCTION_DIGESTS["reconstruct_func"]
 
 
 def test_boundary_rejects_extension_dtypes_before_conversion() -> None:

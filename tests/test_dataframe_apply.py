@@ -615,6 +615,19 @@ def test_series_map_dynamic_authorities_are_frozen_and_checked_live() -> None:
     # never to the user-mutable ``types.FunctionType`` module attribute.
     assert "is_exact_instance_of::<pyo3::types::PyFunction>()" in source
     assert 'py.import("types")' not in source
+    for validator in (
+        "__rxtpd_validate_series_map",
+        "__rxtpd_validate_series_map_values",
+        "__rxtpd_validate_series_algorithms_map_array",
+        "__rxtpd_validate_series_constructor_fget",
+        "__rxtpd_validate_series_ndframe_finalize",
+        "__rxtpd_validate_series_to_numpy",
+    ):
+        validator_source = source.split(f"fn {validator}(", 1)[1].split("\n}\n", 1)[0]
+        assert 'let builtins_dict = py.import("builtins")?.getattr("__dict__")?;' in (
+            validator_source
+        )
+        assert '!descriptor.getattr("__builtins__")?.is(&builtins_dict)' in validator_source
     assert '"_cython_3_1_4"' in source
     assert '"cython_function_or_method"' in source
     assert "descriptor.is_exact_instance(&function_type)" in source

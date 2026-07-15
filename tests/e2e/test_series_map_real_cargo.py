@@ -641,6 +641,66 @@ else:
     assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
 
 
+def test_algorithms_map_array_cached_builtins_replacement_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import builtins
+import types
+import pandas as pd
+import pandas.core.algorithms as algorithms
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_original_map_array = algorithms.map_array
+_module_globals = _original_map_array.__globals__
+_canonical_builtins = _module_globals["__builtins__"]
+assert _canonical_builtins is builtins.__dict__
+
+_forged_builtins = dict(builtins.__dict__)
+_forged_builtins["len"] = lambda value: 0
+_module_globals["__builtins__"] = _forged_builtins
+try:
+    _forged_map_array = types.FunctionType(
+        _original_map_array.__code__,
+        _module_globals,
+        _original_map_array.__name__,
+        _original_map_array.__defaults__,
+        _original_map_array.__closure__,
+    )
+finally:
+    _module_globals["__builtins__"] = _canonical_builtins
+
+_forged_map_array.__module__ = _original_map_array.__module__
+_forged_map_array.__qualname__ = _original_map_array.__qualname__
+_forged_map_array.__kwdefaults__ = _original_map_array.__kwdefaults__
+algorithms.map_array = _forged_map_array
+
+assert _forged_map_array.__globals__ is _module_globals
+assert _forged_map_array.__builtins__ is _forged_builtins
+assert _forged_map_array.__builtins__ is not builtins.__dict__
+assert _module_globals["__builtins__"] is builtins.__dict__
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [1.0, 2.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"cached function builtins replacement was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
 def test_mutable_function_type_anchor_cannot_accept_forged_callable(
     project: CertifiedProject,
 ) -> None:

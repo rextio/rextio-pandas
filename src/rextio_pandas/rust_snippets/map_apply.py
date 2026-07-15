@@ -867,6 +867,9 @@ def _validator_rs(key: str, error: dict[str, str]) -> str:
         type_check = (
             "    if !descriptor.is_exact_instance_of::<pyo3::types::PyFunction>() {\n"
             "        return Err(__rxtpd_type_error(error));\n    }\n"
+            '    let builtins_dict = py.import("builtins")?.getattr("__dict__")?;\n'
+            '    if !descriptor.getattr("__builtins__")?.is(&builtins_dict) {\n'
+            "        return Err(__rxtpd_type_error(error));\n    }\n"
         )
     parts = [
         "fn __rxtpd_validate_" + key + "(\n",

@@ -9,9 +9,12 @@
   `pandas._libs.lib.map_infer`, `Series._constructor`, inherited
   `NDFrame.__finalize__`, and `Series.to_numpy`. Plain Python authorities now
   require PyO3's exact, non-mutable CPython `PyFunction` type instead of the
-  user-mutable `types.FunctionType` module attribute. A real-Cargo regression
-  reproduces and rejects the coordinated forged-callable attack that previously
-  changed fallback output while native execution remained unchanged.
+  user-mutable `types.FunctionType` module attribute, and each function's cached
+  `__builtins__` must be the exact canonical `builtins` module dictionary. A
+  real-Cargo regression reproduces and rejects both the coordinated
+  forged-callable attack and a canonical-code/globals/defaults replacement whose
+  privately cached builtins changed fallback output while native execution
+  remained unchanged.
 - Bind the Cython `map_infer` authority to its exact callable type plus a frozen
   type/metatype structure, including immutable layout/MRO anchors, so replacing
   the callable and its live type name together does not pass validation.

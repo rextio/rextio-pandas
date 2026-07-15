@@ -29,6 +29,23 @@
   `[-999.0, -999.0]`. The partial class/base/global authority graph is therefore
   not a sound product gate and is not extended in this pass.
 
+### Authoritative Series.map benchmark evidence
+
+- Retain the schema-4 full-run JSON plus hash-bound `check.json`/`build.json`
+  evidence for plugin commit `152ff9a0457ae4b4d83bfa2b21429cfee784a931`, core
+  `2bd1d1da0cf59e97d1659606bcb1ec12491e032c`, and API 1.3. The sole checked
+  product route is `native-plugin:rextio-pandas`; all six cells are
+  headline-eligible with matching native/fallback correctness digests.
+- Record the small-input losses honestly: paired native/fallback ratios are
+  6.798× at 1 element, 6.330× at 10, and 4.127× at 100. The native route becomes
+  favourable at the first larger measured point (0.890× at 1,000), then reaches
+  0.126× at 10,000 and 0.032× at 100,000.
+- Set the sustained measured break-even to **1,000 elements**, with no
+  interpolation between 100 and 1,000 and no extrapolation beyond 100,000.
+  Vectorized NumPy/pandas and warm Numba remain faster at every measured size
+  and are context-only; DataFrame.apply has no benchmark cell or performance
+  claim.
+
 ### Series.map increment
 
 - Pin the experiment to Rextio core

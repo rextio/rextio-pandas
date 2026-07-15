@@ -111,6 +111,36 @@ Vectorized NumPy/pandas and cold/warm Numba remain context-only lanes.
 DataFrame.apply has no product cell, context cell, break-even entry, or speedup
 claim in the authoritative benchmark.
 
+### Authoritative Series-only result (2026-07-15)
+
+The retained full run is schema 4 at plugin commit
+`152ff9a0457ae4b4d83bfa2b21429cfee784a931` and core commit
+`2bd1d1da0cf59e97d1659606bcb1ec12491e032c`, with nine counterbalanced paired
+samples per size. All six cells passed the fail-closed headline-eligibility
+gates and had identical native/fallback correctness digests.
+
+| Size | Native median (µs) | pandas fallback median (µs) | Paired native/fallback ratio (95% CI) | Result |
+| ---: | ---: | ---: | ---: | --- |
+| 1 | 63.521 | 9.393 | 6.798 (6.749–6.917) | native 6.80× slower |
+| 10 | 63.575 | 10.052 | 6.330 (6.092–6.497) | native 6.33× slower |
+| 100 | 64.736 | 15.546 | 4.127 (4.098–4.195) | native 4.13× slower |
+| 1,000 | 64.894 | 72.838 | 0.890 (0.879–0.909) | native 1.12× faster |
+| 10,000 | 82.328 | 662.190 | 0.126 (0.121–0.128) | native 7.96× faster |
+| 100,000 | 215.630 | 6,662.083 | 0.032 (0.031–0.033) | native 31.08× faster |
+
+The paired ratio is the median of the nine within-pair ratios, not the quotient
+of the separately rounded lane medians.
+
+The **sustained measured break-even is 1,000 elements**: it is the first
+measured size whose paired 95% CI is wholly below 1.0 and remains so at every
+larger measured size. This is not an interpolated claim about the interval
+between 100 and 1,000, nor an extrapolation beyond 100,000. The small-input
+losses are part of the result, not excluded from the headline evidence.
+Vectorized NumPy/pandas and warm Numba were faster than the native route at
+every measured size, but remain explicitly labeled context-only rather than
+Rextio target claims. See [the benchmark evidence](benchmarks/results/latest.json)
+and its retained `check.json`/`build.json` reports.
+
 ## Install for development
 
 ```bash

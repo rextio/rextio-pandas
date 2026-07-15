@@ -1,0 +1,300 @@
+{
+  "accepted_native": [
+    "bench_app.kernels.series_map"
+  ],
+  "accepted_native_top_levels": [],
+  "contract_version": "2.0.0",
+  "diagnostics": [],
+  "embedding_candidates": [],
+  "modules": [
+    {
+      "diagnostics": [],
+      "file_path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/src/bench_app/__init__.py",
+      "functions": [],
+      "import_policies": [],
+      "imports": {},
+      "logger_group_targets": {},
+      "logger_names": [],
+      "module_name": "bench_app",
+      "top_level": null
+    },
+    {
+      "diagnostics": [],
+      "file_path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/src/bench_app/kernels.py",
+      "functions": [
+        {
+          "accepted": false,
+          "boundary_call_targets": [],
+          "calls": [],
+          "column": 0,
+          "diagnostics": [],
+          "embedding_reason": null,
+          "explicitly_marked": false,
+          "external_accelerator": null,
+          "file_path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/src/bench_app/kernels.py",
+          "inferred_arg_types": {},
+          "inferred_return_type": null,
+          "is_embedding_candidate": false,
+          "is_native_candidate": false,
+          "line": 5,
+          "module_name": "bench_app.kernels",
+          "name": "series_udf",
+          "native_runtime_semantics": false,
+          "native_status": "not-candidate",
+          "native_target_language": null,
+          "plugin_claims": [],
+          "plugin_type_keys": [],
+          "qualname": "bench_app.kernels.series_udf",
+          "rejection_codes": [],
+          "route": "fallback-python"
+        },
+        {
+          "accepted": true,
+          "boundary_call_targets": [],
+          "calls": [
+            {
+              "arg_types": [
+                null
+              ],
+              "column": 11,
+              "in_loop": false,
+              "line": 10,
+              "target": "values.map"
+            }
+          ],
+          "column": 0,
+          "diagnostics": [],
+          "embedding_reason": null,
+          "explicitly_marked": false,
+          "external_accelerator": null,
+          "file_path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/src/bench_app/kernels.py",
+          "inferred_arg_types": {},
+          "inferred_return_type": null,
+          "is_embedding_candidate": false,
+          "is_native_candidate": true,
+          "line": 9,
+          "module_name": "bench_app.kernels",
+          "name": "series_map",
+          "native_runtime_semantics": false,
+          "native_status": "accepted",
+          "native_target_language": "rust",
+          "plugin_claims": [
+            {
+              "callables": [
+                {
+                  "accepts_native": false,
+                  "arg_index": 0,
+                  "body": {
+                    "available": true,
+                    "expression": {
+                      "children": [
+                        {
+                          "children": [
+                            {
+                              "children": [],
+                              "kind": "param",
+                              "literal": null,
+                              "name": "value",
+                              "op": "",
+                              "ops": [],
+                              "param_index": 0,
+                              "result_type": "float",
+                              "target": ""
+                            },
+                            {
+                              "children": [],
+                              "kind": "literal",
+                              "literal": {
+                                "kind": "float",
+                                "value": 0.0
+                              },
+                              "name": "",
+                              "op": "",
+                              "ops": [],
+                              "param_index": null,
+                              "result_type": "float",
+                              "target": ""
+                            }
+                          ],
+                          "kind": "compare",
+                          "literal": null,
+                          "name": "",
+                          "op": "",
+                          "ops": [
+                            ">"
+                          ],
+                          "param_index": null,
+                          "result_type": "bool",
+                          "target": ""
+                        },
+                        {
+                          "children": [
+                            {
+                              "children": [],
+                              "kind": "param",
+                              "literal": null,
+                              "name": "value",
+                              "op": "",
+                              "ops": [],
+                              "param_index": 0,
+                              "result_type": "float",
+                              "target": ""
+                            },
+                            {
+                              "children": [],
+                              "kind": "literal",
+                              "literal": {
+                                "kind": "float",
+                                "value": 2.0
+                              },
+                              "name": "",
+                              "op": "",
+                              "ops": [],
+                              "param_index": null,
+                              "result_type": "float",
+                              "target": ""
+                            }
+                          ],
+                          "kind": "binop",
+                          "literal": null,
+                          "name": "",
+                          "op": "*",
+                          "ops": [],
+                          "param_index": null,
+                          "result_type": "float",
+                          "target": ""
+                        },
+                        {
+                          "children": [
+                            {
+                              "children": [],
+                              "kind": "param",
+                              "literal": null,
+                              "name": "value",
+                              "op": "",
+                              "ops": [],
+                              "param_index": 0,
+                              "result_type": "float",
+                              "target": ""
+                            }
+                          ],
+                          "kind": "unary",
+                          "literal": null,
+                          "name": "",
+                          "op": "-",
+                          "ops": [],
+                          "param_index": null,
+                          "result_type": "float",
+                          "target": ""
+                        }
+                      ],
+                      "kind": "cond",
+                      "literal": null,
+                      "name": "",
+                      "op": "",
+                      "ops": [],
+                      "param_index": null,
+                      "result_type": "float",
+                      "target": ""
+                    },
+                    "unavailable_reason": null
+                  },
+                  "native_symbol": null,
+                  "params": [
+                    {
+                      "name": "value",
+                      "param_type": "float"
+                    }
+                  ],
+                  "qualname": "bench_app.kernels.series_udf",
+                  "return_type": "float",
+                  "runtime_semantics": false
+                }
+              ],
+              "column": 11,
+              "end_column": 33,
+              "end_line": 10,
+              "expression": {
+                "children": [
+                  {
+                    "children": [],
+                    "keywords": [],
+                    "kind": "leaf",
+                    "leaf_index": 0,
+                    "leaf_kind": "name",
+                    "literal": {
+                      "is_literal": false
+                    },
+                    "result_type": null,
+                    "target": ""
+                  }
+                ],
+                "keywords": [],
+                "kind": "call",
+                "leaf_index": null,
+                "leaf_kind": null,
+                "literal": {
+                  "is_literal": false
+                },
+                "result_type": "rextio-pandas/series-f64",
+                "target": "values.map"
+              },
+              "kind": "call",
+              "line": 10,
+              "operand_literals": [
+                {
+                  "is_literal": false
+                }
+              ],
+              "operand_types": [
+                null
+              ],
+              "plugin_id": "rextio-pandas",
+              "receiver": {
+                "arg_type": "rextio-pandas/series-f64",
+                "expr_kind": "name",
+                "is_safe": true,
+                "schema": null
+              },
+              "result_type": "rextio-pandas/series-f64",
+              "rule_id": "rextio-pandas/series-map",
+              "target": "values.map"
+            }
+          ],
+          "plugin_type_keys": [
+            "rextio-pandas/series-f64"
+          ],
+          "qualname": "bench_app.kernels.series_map",
+          "rejection_codes": [],
+          "route": "native-plugin:rextio-pandas"
+        }
+      ],
+      "import_policies": [
+        {
+          "max_depth": 0,
+          "origin": "external",
+          "package": "rextio_pandas",
+          "plugin": null,
+          "policy": "fallback",
+          "reason": "external package without an active plugin uses the default external import policy",
+          "target": "rextio_pandas.types.SeriesF64",
+          "visible_name": "SeriesF64"
+        }
+      ],
+      "imports": {
+        "SeriesF64": "rextio_pandas.types.SeriesF64"
+      },
+      "logger_group_targets": {},
+      "logger_names": [],
+      "module_name": "bench_app.kernels",
+      "top_level": null
+    }
+  ],
+  "native_candidates": [
+    "bench_app.kernels.series_map"
+  ],
+  "native_top_levels": [],
+  "project_root": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9",
+  "rejected_native": [],
+  "rejected_native_top_levels": []
+}

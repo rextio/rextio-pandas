@@ -52,6 +52,43 @@ smallest measured size whose paired-bootstrap 95% CI is wholly below 1.0 and
 remains so at every larger measured size, with every required larger cell
 eligible; it is never interpolated, and is `none` otherwise.
 
+## Authoritative full result (2026-07-15)
+
+The tracked schema-4 non-smoke run used plugin commit
+`152ff9a0457ae4b4d83bfa2b21429cfee784a931`, core commit
+`2bd1d1da0cf59e97d1659606bcb1ec12491e032c`, API 1.3, nine paired repetitions,
+and a 10 ms minimum calibration target. The route report is exactly
+`native-plugin:rextio-pandas`; all six cells are headline-eligible, their
+native/fallback correctness digests match, and every recorded schedule is a
+valid 5:4 or 4:5 counterbalance.
+
+| Size | Native median (µs/call) | pandas fallback median (µs/call) | Paired native/fallback ratio | Paired 95% CI | Interpretation |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 63.521 | 9.393 | 6.798 | 6.749–6.917 | native 6.80× slower |
+| 10 | 63.575 | 10.052 | 6.330 | 6.092–6.497 | native 6.33× slower |
+| 100 | 64.736 | 15.546 | 4.127 | 4.098–4.195 | native 4.13× slower |
+| 1,000 | 64.894 | 72.838 | 0.890 | 0.879–0.909 | native 1.12× faster |
+| 10,000 | 82.328 | 662.190 | 0.126 | 0.121–0.128 | native 7.96× faster |
+| 100,000 | 215.630 | 6,662.083 | 0.032 | 0.031–0.033 | native 31.08× faster |
+
+The ratio is the median of the nine within-pair native/fallback ratios, not the
+quotient of the two separately rounded lane medians.
+
+The result includes the **small-input losses** at 1, 10, and 100 elements. Its
+**sustained measured break-even is 1,000 elements** because that cell and both
+larger measured cells have an eligible CI wholly below 1.0. No crossing is
+interpolated between 100 and 1,000, and nothing is extrapolated past 100,000.
+Vectorized NumPy/pandas and warm Numba were faster at every measured size; they
+remain context-only lanes, not Rextio performance targets.
+
+The authoritative files are [latest.json](results/latest.json),
+[`evidence/check.json`](results/evidence/check.json), and
+[`evidence/build.json`](results/evidence/build.json). The report hashes in
+`latest.json` match the retained files. Absolute temporary build paths and the
+native-artifact digest are intentionally capture-time provenance; the temporary
+build tree and binary are not retained after the run, so the repository does
+not claim that those paths remain live or that the binary can be rehashed later.
+
 Vectorized NumPy/pandas and cold/warm Numba are context-only lanes — never
 Rextio target claims; the installed Numba version is recorded and Numba
 honestly reports itself unavailable when it cannot be imported.

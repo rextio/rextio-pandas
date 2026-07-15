@@ -1,6 +1,6 @@
 # Product-route benchmark
 
-Run the actual generated plugin routes against the exact original pandas call
+Run the actual generated Series.map route against the exact original pandas call
 through the same generated wrapper:
 
 ```bash
@@ -16,7 +16,7 @@ python -m benchmarks.bench_product_routes --smoke
 A **fail-closed** preflight (no Python `assert`, so it survives `python -O`)
 runs before any build or timing and *rejects* — not merely records — an invalid
 state. It requires exact clean core and plugin Git worktrees; the core HEAD at
-`ac2b79d304f13abaaecaf7714f897574c3b6256f`; `PLUGIN_API_VERSION == "1.3"`;
+`2bd1d1da0cf59e97d1659606bcb1ec12491e032c`; `PLUGIN_API_VERSION == "1.3"`;
 pandas 2.3.3 / NumPy 2.3.5; that the imported `rextio`/`rextio_pandas` resolve
 under the expected editable checkout (or, for a VCS/wheel install, that the
 parsed `direct_url.json` proves the exact credential-free URL and commit or the
@@ -50,14 +50,11 @@ break-even.
 The reported **sustained measured break-even** for the Series route is the
 smallest measured size whose paired-bootstrap 95% CI is wholly below 1.0 and
 remains so at every larger measured size, with every required larger cell
-eligible; it is never interpolated, and is `none` otherwise. DataFrame is always
-`none`.
+eligible; it is never interpolated, and is `none` otherwise.
 
-`pandas_apply_default`, the semantically equivalent positional-array
-`pandas_apply_raw_true`, vectorized NumPy/pandas, and cold/warm Numba are
-context-only lanes — never Rextio target claims; the installed Numba version is
-recorded and Numba honestly reports itself unavailable when it cannot be
-imported.
+Vectorized NumPy/pandas and cold/warm Numba are context-only lanes — never
+Rextio target claims; the installed Numba version is recorded and Numba
+honestly reports itself unavailable when it cannot be imported.
 
 Only a successful **full** run atomically replaces the tracked
 `benchmarks/results/latest.json` and its `evidence/` directory (and nothing
@@ -66,7 +63,7 @@ never delete or overwrite the authoritative result. The tracked JSON contains
 correctness digests, compile time, the full provenance block above, the
 null-call floor, small-input losses, and the sustained break-even.
 
-DataFrame timings are deliberately ineligible for a headline speedup claim:
-mixed-row coercion and general NumPy-scalar warning/overflow semantics remain
-NO-GO. The benchmark reports the narrow homogeneous-f64 experiment without
-extrapolating beyond measured sizes.
+DataFrame.apply is a prototype/NO-GO because the complete executable pandas
+authority cannot be bounded by the prototype's partial digest. It is excluded
+entirely: no product cell, context lane, break-even entry, or speedup claim is
+written by this harness.

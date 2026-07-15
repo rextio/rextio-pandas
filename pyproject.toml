@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rextio-pandas"
 dynamic = ["version"]
-description = "Private Rextio API 1.3 incubator for narrow pandas numeric routes."
+description = "Private Rextio API 1.3 incubator for audited pandas Series.map lowering."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -20,7 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-  "rextio @ git+https://github.com/rextio/rextio-core-next.git@ac2b79d304f13abaaecaf7714f897574c3b6256f",
+  "rextio @ git+https://github.com/rextio/rextio-core-next.git@2bd1d1da0cf59e97d1659606bcb1ec12491e032c",
   "pandas==2.3.3",
   "numpy==2.3.5",
 ]
@@ -47,6 +47,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
+markers = [
+  "needs_cargo: builds and executes a real Rust extension; serialize these tests",
+]
 
 [tool.ruff]
 target-version = "py311"
@@ -71,4 +74,3 @@ ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_optional = true
-

@@ -20,7 +20,7 @@ class SeriesI64:
 
 
 class DataFrameF64:
-    """An exact homogeneous ``float64`` DataFrame parameterized by a schema."""
+    """Research-only DataFrame marker; not a registered native plugin type."""
 
     def __class_getitem__(cls, schema: object) -> type[DataFrameF64]:
         """Keep ``DataFrameF64[Schema]`` importable without runtime dependencies."""

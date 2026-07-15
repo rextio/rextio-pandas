@@ -16,6 +16,7 @@ from rextio.plugins.api import PLUGIN_API_VERSION, BoundaryConversion
 import rextio_pandas
 from rextio_pandas.plugin import CORE_COMMIT, RextioPandasPlugin
 from rextio_pandas.plugin_types import PLUGIN_TYPES
+from rextio_pandas.rust_snippets.map_apply import boundary_helpers
 
 from conftest import pandas_registry
 
@@ -159,21 +160,41 @@ def test_clean_env_proof_script_is_credential_free_and_no_deps_free() -> None:
     assert "'--no-deps'" not in text
 
 
-def test_loader_registers_materialized_series_types_and_exact_crate() -> None:
+def test_loader_registers_only_supported_series_types_and_exact_crate() -> None:
     registry = pandas_registry()
 
     assert registry.active[0].api_version == "1.3"
     assert registry.active[0].lowering_provided is True
     assert registry.active[0].packages == ("pandas",)
     assert tuple(binding.plugin_type for binding in registry.types) == PLUGIN_TYPES
-    assert len(PLUGIN_TYPES) == 3
+    assert len(PLUGIN_TYPES) == 2
+    assert [plugin_type.key for plugin_type in PLUGIN_TYPES] == [
+        "rextio-pandas/series-f64",
+        "rextio-pandas/series-i64",
+    ]
     assert all(
         isinstance(plugin_type.conversion, BoundaryConversion) for plugin_type in PLUGIN_TYPES
     )
     assert all(plugin_type.is_resident is False for plugin_type in PLUGIN_TYPES)
+    assert all(plugin_type.uses == () for plugin_type in PLUGIN_TYPES)
+    assert all(plugin_type.helpers == (boundary_helpers(),) for plugin_type in PLUGIN_TYPES)
     assert [
         (entry.dependency.name, entry.dependency.version) for entry in registry.crate_dependencies
     ] == [("numpy", "=0.29.0")]
+
+
+def test_public_authority_exposes_series_map_and_apply_no_go_only() -> None:
+    provider = RextioPandasPlugin()
+    assert provider.covers().symbols == ("pandas.Series.map",)
+
+    records = provider.describe(object())  # type: ignore[arg-type]
+    native = [record for record in records if record.outcome == "native"]
+    assert [record.id for record in native] == ["rextio-pandas/series-map"]
+    [apply_no_go] = [record for record in records if "dataframe-apply" in record.id]
+    assert apply_no_go.id == "rextio-pandas/dataframe-apply-prototype-no-go"
+    assert apply_no_go.outcome == "fallback"
+    assert apply_no_go.verified is False
+    assert "not registered, claimed, lowered, built, benchmarked" in apply_no_go.constraint
 
 
 def test_annotation_vocabulary_imports_without_pandas_or_core() -> None:

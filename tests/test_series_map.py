@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from rextio.analyzer.project_scanner import analyze_project
+from rextio.build.orchestrator import _plugin_lowering_inputs
+from rextio.codegen.rust.generator import generate_rust_module
 from rextio.config.schema import RextioConfig
+from rextio.ir.lowering import lower_project
+from rextio.ir.nodes import BlockIR, FunctionIR, ModuleIR
 from rextio.plugins.api import (
     CallableBody,
     CallableBodyExpr,
@@ -22,6 +27,7 @@ from rextio.plugins.api import (
 from rextio_pandas.claim.map_apply import SERIES_MAP_RULE
 from rextio_pandas.diagnostics import SERIES_F64, SERIES_I64
 from rextio_pandas.plugin import RextioPandasPlugin
+from rextio_pandas.rust_snippets.map_apply import boundary_helpers
 
 from conftest import pandas_registry
 
@@ -251,6 +257,68 @@ def _function(analysis: object, name: str):
     raise AssertionError(name)
 
 
+def _generated_source(analysis: object, registry: object) -> str:
+    type_maps, providers, types_by_key = _plugin_lowering_inputs(
+        SimpleNamespace(plugins=registry)  # type: ignore[arg-type]
+    )
+    assert type_maps is not None and providers is not None and types_by_key is not None
+    module_ir = lower_project(analysis, plugin_types=type_maps)  # type: ignore[arg-type]
+    return generate_rust_module(
+        module_ir,
+        plugin_providers=providers,
+        plugin_types_by_key=types_by_key,
+    )
+
+
+def test_claimless_parameter_only_signature_emits_boundary_support(tmp_path: Path) -> None:
+    _write_module(
+        tmp_path,
+        """
+from rextio_pandas.types import SeriesF64
+
+def inspect(series: SeriesF64) -> float:
+    return 1.0
+""",
+    )
+    registry = pandas_registry()
+    analysis = analyze_project(
+        tmp_path,
+        active_plugins=registry.active,
+        plugin_registry=registry,
+        plugin_config=CONFIG,
+    )
+    inspect = _function(analysis, "app.kernels.inspect")
+    assert inspect.accepted is True
+    assert inspect.plugin_claims == []
+
+    source = _generated_source(analysis, registry)
+    assert source.count(boundary_helpers()) == 1
+    assert "let series = __rxtpd_extract_series_f64(py, &series)?;" in source
+    assert "fn __rxtpd_map_values_" not in source
+
+
+def test_return_only_signature_source_collects_boundary_support() -> None:
+    """Exercise return-position collection independently of a parameter."""
+    registry = pandas_registry()
+    _maps, _providers, types_by_key = _plugin_lowering_inputs(
+        SimpleNamespace(plugins=registry)  # type: ignore[arg-type]
+    )
+    assert types_by_key is not None
+    series = types_by_key[SERIES_F64]
+    function = FunctionIR(
+        name="make_series",
+        qualname="app.kernels.make_series",
+        module_name="app.kernels",
+        params=[],
+        return_type=series,
+        body=BlockIR(statements=[]),
+        plugin_lowered=True,
+    )
+    source = generate_rust_module(ModuleIR(functions=[function]))
+    assert source.count(boundary_helpers()) == 1
+    assert "fn app__kernels__make_series" in source
+
+
 def test_analyzer_routes_exact_series_map_through_plugin(tmp_path: Path) -> None:
     _write_module(
         tmp_path,
@@ -281,6 +349,12 @@ def run(series: SeriesF64) -> SeriesF64:
     assert claim.receiver.arg_type == SERIES_F64
     assert claim.callables[0].qualname == "app.kernels.branch"
     assert claim.callables[0].body.available is True
+
+    # The signature and LoweredExpr both contribute the same boundary helper;
+    # API 1.3 exact-text dedup emits it once alongside the map-specific helper.
+    source = _generated_source(analysis, registry)
+    assert source.count(boundary_helpers()) == 1
+    assert source.count("fn __rxtpd_map_values_") == 1
 
 
 def test_analyzer_rejects_keyword_mapper_and_na_action_with_plugin_code(tmp_path: Path) -> None:

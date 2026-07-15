@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parents[1]
-CORE_COMMIT = "ac2b79d304f13abaaecaf7714f897574c3b6256f"
+CORE_COMMIT = "2bd1d1da0cf59e97d1659606bcb1ec12491e032c"
 CORE_PROJECT = "rextio-core-next"
 DEFAULT_MIRROR = Path("/Volumes/Data/workspace/rextio/rextio-core-next")
 

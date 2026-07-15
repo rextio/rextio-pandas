@@ -16,10 +16,13 @@ from rextio.plugins.testing import CertifiedProject, build_certification_project
 
 from rextio_pandas.diagnostics import RUNTIME_ERRORS
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("cargo") is None,
-    reason="real-Cargo proof requires cargo",
-)
+pytestmark = [
+    pytest.mark.needs_cargo,
+    pytest.mark.skipif(
+        shutil.which("cargo") is None,
+        reason="real-Cargo proof requires cargo",
+    ),
+]
 
 KERNELS = """
 from rextio_pandas.types import SeriesF64, SeriesI64
@@ -55,6 +58,14 @@ def map_i64(series: SeriesI64) -> SeriesI64:
 
 def map_i64_to_f64(series: SeriesI64) -> SeriesF64:
     return series.map(classify_i64)
+
+
+def signature_probe(series: SeriesF64) -> float:
+    return 1.0
+
+
+def signature_roundtrip(series: SeriesF64) -> SeriesF64:
+    return series.map(identity_f64)
 """
 
 
@@ -98,16 +109,25 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
         for module in check["modules"]
         for function in module["functions"]
     }
-    for name in ("map_f64", "map_f64_identity", "map_i64", "map_i64_to_f64"):
+    for name in (
+        "map_f64",
+        "map_f64_identity",
+        "map_i64",
+        "map_i64_to_f64",
+        "signature_probe",
+        "signature_roundtrip",
+    ):
         record = functions[f"pandas_app.kernels.{name}"]
         assert record["native_status"] == "accepted"
         assert record["route"] == "native-plugin:rextio-pandas"
+    assert functions["pandas_app.kernels.signature_probe"]["plugin_claims"] == []
 
     rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
         encoding="utf-8"
     )
     assert rust.count("fn __rxtpd_map_values_") == 4
     assert rust.count("py.detach(|| __rxtpd_map_values_") == 4
+    assert rust.count("struct RxtPandasSeriesF64") == 1
     for body in rust.split("fn __rxtpd_map_values_")[1:]:
         hot = body.split("fn __rxtpd_map_series_", 1)[0]
         assert "for &value in input.iter()" in hot
@@ -115,6 +135,22 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
         assert "Python::attach" not in hot
         assert "Python::with_gil" not in hot
         assert ".call" not in hot
+
+
+def test_claimless_signature_and_series_roundtrip_use_real_boundary_support(
+    project: CertifiedProject,
+) -> None:
+    source = pd.Series([-0.0, 1.5], dtype="float64", name="signature")
+    probe = project.equivalence_checker("pandas_app.kernels.signature_probe")
+    assert probe(source) == 1.0
+
+    roundtrip = project.equivalence_checker(
+        "pandas_app.kernels.signature_roundtrip",
+        equals=_series_equal,
+    )
+    result = roundtrip(source)
+    assert_series_equal(result, source, check_exact=True)
+    assert np.array_equal(result.to_numpy().view(np.uint64), source.to_numpy().view(np.uint64))
 
 
 @pytest.mark.parametrize(

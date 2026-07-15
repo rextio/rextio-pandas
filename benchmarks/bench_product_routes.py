@@ -40,7 +40,7 @@ from benchmarks.cases import KERNEL_SOURCE, BenchmarkCase, make_case
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE_ROOT = Path("/Volumes/Data/workspace/rextio/rextio-core-next")
-CORE_SHA = "ac2b79d304f13abaaecaf7714f897574c3b6256f"
+CORE_SHA = "2bd1d1da0cf59e97d1659606bcb1ec12491e032c"
 CORE_VCS_URL = "https://github.com/rextio/rextio-core-next.git"
 
 # Authoritative tracked output for a full run; smoke never touches these.
@@ -213,8 +213,8 @@ def _headline_eligibility(
     product = cell["product"]
 
     if cell["route"] != "series.map":
-        # Per the WP contract, DataFrame speedups stay out of headlines until
-        # mixed-row coercion and NumPy-scalar semantics are resolved.
+        # The authoritative harness has one product surface. Unknown/stale
+        # route cells remain fail-closed if an older artifact is inspected.
         reasons.append("route-not-headline-surface")
     if not cell.get("route_verified", False):
         reasons.append("route-or-provenance-unverified")
@@ -454,34 +454,18 @@ def _numba_context(case: BenchmarkCase, target_ns: int, repetitions: int) -> dic
             "classification": "context-only; not a Rextio target claim",
         }
 
-    if case.route == "series.map":
-        values = case.argument.to_numpy(copy=False)  # type: ignore[union-attr]
+    values = case.argument.to_numpy(copy=False)
 
-        @numba.njit
-        def kernel(data: np.ndarray) -> np.ndarray:
-            output = np.empty(data.shape[0], dtype=np.float64)
-            for index in range(data.shape[0]):
-                value = data[index]
-                output[index] = value * 2.0 if value > 0.0 else -value
-            return output
+    @numba.njit
+    def kernel(data: np.ndarray) -> np.ndarray:
+        output = np.empty(data.shape[0], dtype=np.float64)
+        for index in range(data.shape[0]):
+            value = data[index]
+            output[index] = value * 2.0 if value > 0.0 else -value
+        return output
 
-        def call() -> pd.Series:
-            return pd.Series(kernel(values), index=case.argument.index, name=case.argument.name)  # type: ignore[union-attr]
-
-    else:
-        frame = case.argument
-        values = frame.to_numpy(copy=False)  # type: ignore[union-attr]
-
-        @numba.njit
-        def kernel(data: np.ndarray) -> np.ndarray:
-            output = np.empty(data.shape[0], dtype=np.float64)
-            for index in range(data.shape[0]):
-                left = data[index, 0]
-                output[index] = left if left >= 0.0 else -data[index, 1]
-            return output
-
-        def call() -> pd.Series:
-            return pd.Series(kernel(values), index=frame.index, name=None)  # type: ignore[union-attr]
+    def call() -> pd.Series:
+        return pd.Series(kernel(values), index=case.argument.index, name=case.argument.name)
 
     cold_start = time.perf_counter_ns()
     cold_result = call()
@@ -670,7 +654,6 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
         }
         expected_routes = {
             "bench_app.kernels.series_map": "native-plugin:rextio-pandas",
-            "bench_app.kernels.dataframe_apply": "native-plugin:rextio-pandas",
         }
         for qualname, expected_route in expected_routes.items():
             _require(
@@ -758,52 +741,47 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
                 "native_module_matches_build_artifact": True,
             }
             cells: list[dict[str, Any]] = []
-            for route_index, route in enumerate(("series.map", "dataframe.apply")):
-                for size_index, size in enumerate(sizes):
-                    case = make_case(route, size)
-                    function = getattr(module, case.function_name)
-                    product = _product_samples(
-                        function,
-                        case.argument,
-                        repetitions=repetitions,
-                        target_ns=target_ns,
-                        seed=args.seed + route_index * 100 + size_index,
+            route = "series.map"
+            for size_index, size in enumerate(sizes):
+                case = make_case(route, size)
+                function = getattr(module, case.function_name)
+                product = _product_samples(
+                    function,
+                    case.argument,
+                    repetitions=repetitions,
+                    target_ns=target_ns,
+                    seed=args.seed + size_index,
+                )
+                fallback_digest = product["correctness_digest"]["fallback"]
+                contexts = _context_samples(
+                    case.contexts,
+                    repetitions=repetitions,
+                    target_ns=target_ns,
+                )
+                for context in contexts.values():
+                    context["matches_fallback_digest"] = (
+                        context["correctness_digest"] == fallback_digest
                     )
-                    fallback_digest = product["correctness_digest"]["fallback"]
-                    contexts = _context_samples(
-                        case.contexts,
-                        repetitions=repetitions,
-                        target_ns=target_ns,
+                numba = _numba_context(case, target_ns, repetitions)
+                if numba.get("available"):
+                    numba["matches_fallback_digest"] = (
+                        numba["correctness_digest"] == fallback_digest
                     )
-                    for context in contexts.values():
-                        context["matches_fallback_digest"] = (
-                            context["correctness_digest"] == fallback_digest
-                        )
-                    numba = _numba_context(case, target_ns, repetitions)
-                    if numba.get("available"):
-                        numba["matches_fallback_digest"] = (
-                            numba["correctness_digest"] == fallback_digest
-                        )
-                    cells.append(
-                        {
-                            "route": route,
-                            "size": size,
-                            "product": product,
-                            "contexts": contexts,
-                            "numba": numba,
-                            "route_verified": routes.get(f"bench_app.kernels.{case.function_name}")
-                            == "native-plugin:rextio-pandas",
-                            # Filled in fail-closed after the null-call floor exists.
-                            "headline_eligible": False,
-                            "headline_ineligible_reasons": ["not-yet-evaluated"],
-                            "headline_note": (
-                                "verified exact Series route"
-                                if route == "series.map"
-                                else "NO headline speedup claim: mixed-row coercion and "
-                                "NumPy-scalar semantics remain out of scope"
-                            ),
-                        }
-                    )
+                cells.append(
+                    {
+                        "route": route,
+                        "size": size,
+                        "product": product,
+                        "contexts": contexts,
+                        "numba": numba,
+                        "route_verified": routes.get(f"bench_app.kernels.{case.function_name}")
+                        == "native-plugin:rextio-pandas",
+                        # Filled in fail-closed after the null-call floor exists.
+                        "headline_eligible": False,
+                        "headline_ineligible_reasons": ["not-yet-evaluated"],
+                        "headline_note": "verified exact Series route",
+                    }
+                )
         finally:
             sys.path.remove(str(project.build_python_dir))
             for name in list(sys.modules):
@@ -826,16 +804,14 @@ def _bench(args: argparse.Namespace) -> dict[str, Any]:
         cell["headline_eligible"] = eligible
         cell["headline_ineligible_reasons"] = reasons
 
-    # Sustained measured break-even: DataFrame stays headline-ineligible, so it
-    # is always ``none``; Series requires favourability at the size and every
-    # larger measured size (no interpolation).
+    # Series requires favourability at the size and every larger measured size
+    # (no interpolation). No prototype route enters the result schema.
     sustained_break_even: dict[str, int | None] = {
         "series.map": _sustained_break_even(cells),
-        "dataframe.apply": None,
     }
 
     return {
-        "schema": 3,
+        "schema": 4,
         "smoke": args.smoke,
         "generated_at_unix_ns": time.time_ns(),
         "elapsed_ns": time.perf_counter_ns() - started,

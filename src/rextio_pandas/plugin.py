@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from rextio.plugins.models import RextioPlugin
 
 PLUGIN_ID = "rextio-pandas"
-CORE_COMMIT = "ac2b79d304f13abaaecaf7714f897574c3b6256f"
+CORE_COMMIT = "2bd1d1da0cf59e97d1659606bcb1ec12491e032c"
 
 
 def _require_api_13() -> None:
@@ -49,7 +49,7 @@ class RextioPandasPlugin:
 
         return RextioPlugin(
             id=PLUGIN_ID,
-            name=f"pandas numeric incubator (rextio-pandas {__version__})",
+            name=f"pandas Series.map incubator (rextio-pandas {__version__})",
             source_language="python",
             target_language="rust",
             packages=COVERAGE.packages,

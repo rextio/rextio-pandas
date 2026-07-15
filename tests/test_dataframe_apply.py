@@ -11,21 +11,19 @@ from rextio.plugins.api import (
     CallableBodyExpr,
     CallableMeta,
     CallableParam,
-    Claimed,
     ClaimLiteral,
     ClaimSite,
     KeywordArg,
     LoweringContext,
     NotCovered,
     ReceiverMeta,
-    Rejected,
     ScalarLiteral,
     SchemaField,
     SchemaMeta,
 )
 
-from rextio_pandas.claim.map_apply import DATAFRAME_APPLY_RULE
-from rextio_pandas.diagnostics import FRAME_F64, SERIES_F64
+from rextio_pandas.claim.map_apply import audit_frame_callable
+from rextio_pandas.diagnostics import PROTOTYPE_FRAME_F64, SERIES_F64
 from rextio_pandas.plugin import RextioPandasPlugin
 from rextio_pandas.rust_snippets.map_apply import (
     _APPLY_CLASS_AUTHORITIES,
@@ -39,7 +37,7 @@ from rextio_pandas.rust_snippets.map_apply import (
     boundary_helpers,
     compute_authority_class_digest,
     compute_authority_code_digest,
-    dataframe_apply_helpers,
+    prototype_dataframe_apply_helpers,
 )
 
 from conftest import pandas_registry
@@ -131,7 +129,7 @@ def apply_site(
         line=1,
         column=0,
         receiver=ReceiverMeta(
-            arg_type=FRAME_F64,
+            arg_type=PROTOTYPE_FRAME_F64,
             expr_kind="name",
             is_safe=True,
             schema=declared_schema if declared_schema is not None else schema("float", "float"),
@@ -141,21 +139,21 @@ def apply_site(
     )
 
 
-def test_claims_exact_homogeneous_f64_axis1_row_udf() -> None:
+def test_exact_homogeneous_f64_axis1_row_udf_is_not_claimed() -> None:
     result = PLUGIN.claim(apply_site(row_meta(branch_body())), CONFIG)
-    assert result == Claimed(rule_id=DATAFRAME_APPLY_RULE, result_type=SERIES_F64)
+    assert result == NotCovered()
+    assert audit_frame_callable(row_meta(branch_body()), schema("float", "float")).accepted
 
 
 @pytest.mark.parametrize("axis_value", [0, -1, True, "columns"])
-def test_rejects_every_axis_spelling_except_non_bool_integer_one(
+def test_every_axis_spelling_is_outside_plugin_coverage(
     axis_value: bool | int | str,
 ) -> None:
     result = PLUGIN.claim(
         apply_site(row_meta(branch_body()), keywords=(axis(axis_value),)),
         CONFIG,
     )
-    assert isinstance(result, Rejected)
-    assert result.diagnostic.code == "RXTP-PANDAS-011"
+    assert result == NotCovered()
 
 
 def test_dynamic_axis_is_left_to_core_without_plugin_diagnostic() -> None:
@@ -167,7 +165,7 @@ def test_dynamic_axis_is_left_to_core_without_plugin_diagnostic() -> None:
     assert result == NotCovered()
 
 
-def test_rejects_omitted_positional_and_extra_apply_arguments() -> None:
+def test_omitted_positional_and_extra_apply_arguments_are_not_claimed() -> None:
     callable_meta = row_meta(branch_body())
     omitted = PLUGIN.claim(apply_site(callable_meta, keywords=()), CONFIG)
     positional = PLUGIN.claim(
@@ -183,18 +181,17 @@ def test_rejects_omitted_positional_and_extra_apply_arguments() -> None:
         CONFIG,
     )
     for result in (omitted, positional, extra):
-        assert isinstance(result, Rejected)
-        assert result.diagnostic.code == "RXTP-PANDAS-011"
+        assert result == NotCovered()
 
 
-def test_rejects_missing_mixed_and_empty_schema() -> None:
+def test_missing_mixed_and_empty_schema_apply_sites_are_not_claimed() -> None:
     callable_meta = row_meta(branch_body())
     missing_site = apply_site(callable_meta)
     missing_site = ClaimSite(
         **{
             **missing_site.__dict__,
             "receiver": ReceiverMeta(
-                arg_type=FRAME_F64,
+                arg_type=PROTOTYPE_FRAME_F64,
                 expr_kind="name",
                 is_safe=True,
                 schema=None,
@@ -209,8 +206,7 @@ def test_rejects_missing_mixed_and_empty_schema() -> None:
         ),
     )
     for result in results:
-        assert isinstance(result, Rejected)
-        assert result.diagnostic.code == "RXTP-PANDAS-012"
+        assert result == NotCovered()
 
 
 @pytest.mark.parametrize(
@@ -242,19 +238,19 @@ def test_rejects_missing_mixed_and_empty_schema() -> None:
         ),
     ],
 )
-def test_rejects_unaudited_row_bodies(body: CallableBodyExpr) -> None:
+def test_unaudited_row_bodies_are_not_claimed(body: CallableBodyExpr) -> None:
     result = PLUGIN.claim(apply_site(row_meta(body)), CONFIG)
-    assert isinstance(result, Rejected)
-    assert result.diagnostic.code == "RXTP-PANDAS-013"
+    assert result == NotCovered()
+    assert not audit_frame_callable(row_meta(body), schema("float", "float")).accepted
 
 
-def test_lower_is_schema_hashed_deterministic_and_pure() -> None:
+def test_plugin_lower_refuses_apply_but_private_prototype_stays_characterized() -> None:
     callable_meta = row_meta(branch_body())
     claimed = apply_site(callable_meta)
     claimed = ClaimSite(
         **{
             **claimed.__dict__,
-            "rule_id": DATAFRAME_APPLY_RULE,
+            "rule_id": "rextio-pandas/prototype-dataframe-apply-axis1",
             "result_type": SERIES_F64,
         }
     )
@@ -265,12 +261,20 @@ def test_lower_is_schema_hashed_deterministic_and_pure() -> None:
         fresh_name=lambda prefix: f"{prefix}_0",
     )
 
-    first = PLUGIN.lower(claimed, context)
-    second = PLUGIN.lower(claimed, context)
+    with pytest.raises(ValueError, match="malformed Series.map"):
+        PLUGIN.lower(claimed, context)
 
-    assert first == second
-    assert first.rust.startswith("__rxtpd_apply_frame_")
-    source = "\n".join(first.helpers)
+    first_name, first_helpers = prototype_dataframe_apply_helpers(
+        claimed.receiver.schema,
+        callable_meta,  # type: ignore[union-attr]
+    )
+    second_name, second_helpers = prototype_dataframe_apply_helpers(
+        claimed.receiver.schema,
+        callable_meta,  # type: ignore[union-attr]
+    )
+    assert (first_name, first_helpers) == (second_name, second_helpers)
+    assert first_name.startswith("__rxtpd_apply_frame_")
+    source = "\n".join(first_helpers)
     assert 'const EXPECTED_COLUMNS: &[&str] = &["left", "right"]' in source
     assert "py.detach(|| __rxtpd_apply_values_" in source
     hot = source[source.index("fn __rxtpd_apply_values_") : source.index("fn __rxtpd_apply_frame_")]
@@ -318,7 +322,7 @@ def test_unicode_schema_field_lowers_to_braced_rust_unicode_escape() -> None:
         return_type="float",
         body=CallableBody(available=True, expression=body),
     )
-    _, helpers = dataframe_apply_helpers(schema_meta, meta)
+    _, helpers = prototype_dataframe_apply_helpers(schema_meta, meta)
     source = "\n".join(helpers)
     assert r'EXPECTED_COLUMNS: &[&str] = &["\u{ac12}"]' in source
     # No bare JSON-style ``\uXXXX`` escapes survive into the Rust source.
@@ -612,6 +616,56 @@ def test_same_module_class_replacement_is_rejected_by_the_frozen_class_digest() 
     assert _class_digest_or_none(tampered, column) != _APPLY_CLASS_DIGESTS["frame_column_apply"]
 
 
+def test_apply_authority_digest_can_be_forged_while_fallback_behavior_changes() -> None:
+    """Record the decisive authority bypass that keeps apply a product NO-GO."""
+    import pandas as pd
+    import pandas.core.apply as apply_mod
+
+    spec = _APPLY_CLASS_AUTHORITIES["frame_column_apply"]
+    original = apply_mod.FrameColumnApply
+    original_dict = original.__dict__
+
+    def unchecked_apply(self):  # type: ignore[no-untyped-def]
+        return pd.Series([-999.0] * len(self.obj), index=self.obj.index, dtype="float64")
+
+    namespace: dict[str, object] = {
+        "__module__": original.__module__,
+        "__qualname__": original.__qualname__,
+        "axis": original_dict["axis"],
+        "apply": unchecked_apply,
+    }
+    for name in spec["property_methods"]:
+        namespace[name] = original_dict[name]
+    for name in spec["function_methods"]:
+        namespace[name] = original_dict[name]
+    # FrameApply declares these abstract, while the canonical concrete class
+    # supplies implementations. They are executable authority omitted from the
+    # frozen digest, so copying them also demonstrates the graph is incomplete.
+    for name in ("apply_with_numba", "generate_numba_apply_func"):
+        namespace[name] = original_dict[name]
+    forged = type("FrameColumnApply", (apply_mod.FrameApply,), namespace)
+    assert not forged.__abstractmethods__
+
+    # The digest covers the copied members and MRO names, but not the executable
+    # apply() method that ordinary pandas dispatches. The forged authority is
+    # therefore byte-identical under the prototype validator.
+    assert (
+        compute_authority_class_digest(forged, spec) == _APPLY_CLASS_DIGESTS["frame_column_apply"]
+    )
+
+    frame = pd.DataFrame({"left": [1.0, 2.0], "right": [10.0, 20.0]})
+
+    def mapper(row):  # type: ignore[no-untyped-def]
+        return row["left"] + row["right"]
+
+    assert frame.apply(mapper, axis=1).tolist() == [11.0, 22.0]
+    apply_mod.FrameColumnApply = forged
+    try:
+        assert frame.apply(mapper, axis=1).tolist() == [-999.0, -999.0]
+    finally:
+        apply_mod.FrameColumnApply = original
+
+
 def test_same_module_reconstruct_func_replacement_changes_the_code_digest() -> None:
     # Replacing ``pandas.core.apply.reconstruct_func`` with a same-module function
     # of matching metadata but a different code object changes the frozen code
@@ -666,7 +720,7 @@ def _function(analysis: object, name: str):
     raise AssertionError(name)
 
 
-def test_analyzer_routes_exact_schema_bound_apply(tmp_path: Path) -> None:
+def test_analyzer_keeps_exact_schema_bound_apply_on_fallback(tmp_path: Path) -> None:
     _write_module(
         tmp_path,
         """
@@ -691,45 +745,28 @@ def run(frame: DataFrameF64[Row]) -> SeriesF64:
         plugin_config=CONFIG,
     )
     run = _function(analysis, "app.kernels.run")
-    assert run.route == "native-plugin:rextio-pandas"
-    assert run.accepted is True
-    claim = run.plugin_claims[0]
-    assert claim.rule_id == DATAFRAME_APPLY_RULE
-    assert claim.receiver.schema.identity == "app.kernels.Row"
-    assert [(item.name, item.field_type) for item in claim.receiver.schema.fields] == [
-        ("left", "float"),
-        ("right", "float"),
-    ]
-    assert claim.callables[0].accepts_native is False
-    assert claim.callables[0].body.available is True
+    assert run.route == "fallback-python"
+    assert run.plugin_claims == []
+    assert not any(item.code.startswith("RXTP-PANDAS-") for item in run.diagnostics)
 
 
 @pytest.mark.parametrize(
-    ("function", "call", "expected_code"),
+    ("function", "call"),
     [
-        ("omitted", "frame.apply(choose)", "RXTP-PANDAS-011"),
-        ("positional", "frame.apply(choose, 1)", "RXTP-PANDAS-011"),
-        ("bool_axis", "frame.apply(choose, axis=True)", "RXTP-PANDAS-011"),
-        ("string_axis", 'frame.apply(choose, axis="columns")', "RXTP-PANDAS-011"),
-        ("raw", "frame.apply(choose, axis=1, raw=False)", "RXTP-PANDAS-011"),
-        ("raw_true", "frame.apply(choose, axis=1, raw=True)", "RXTP-PANDAS-011"),
-        (
-            "keyword_callable",
-            "frame.apply(func=choose, axis=1)",
-            "RXTP-PANDAS-011",
-        ),
-        (
-            "result_type",
-            "frame.apply(choose, axis=1, result_type=None)",
-            "RXTP-PANDAS-011",
-        ),
+        ("omitted", "frame.apply(choose)"),
+        ("positional", "frame.apply(choose, 1)"),
+        ("bool_axis", "frame.apply(choose, axis=True)"),
+        ("string_axis", 'frame.apply(choose, axis="columns")'),
+        ("raw", "frame.apply(choose, axis=1, raw=False)"),
+        ("raw_true", "frame.apply(choose, axis=1, raw=True)"),
+        ("keyword_callable", "frame.apply(func=choose, axis=1)"),
+        ("result_type", "frame.apply(choose, axis=1, result_type=None)"),
     ],
 )
-def test_analyzer_rejects_static_apply_shapes_with_plugin_codes(
+def test_analyzer_leaves_static_apply_shapes_on_unclaimed_fallback(
     tmp_path: Path,
     function: str,
     call: str,
-    expected_code: str,
 ) -> None:
     _write_module(
         tmp_path,
@@ -755,10 +792,11 @@ def {function}(frame: DataFrameF64[Row]) -> SeriesF64:
     )
     analyzed = _function(analysis, f"app.kernels.{function}")
     assert analyzed.route == "fallback-python"
-    assert any(item.code == expected_code for item in analyzed.diagnostics)
+    assert analyzed.plugin_claims == []
+    assert not any(item.code.startswith("RXTP-PANDAS-") for item in analyzed.diagnostics)
 
 
-def test_analyzer_rejects_mixed_schema_and_row_arithmetic(tmp_path: Path) -> None:
+def test_analyzer_keeps_mixed_schema_and_row_arithmetic_on_fallback(tmp_path: Path) -> None:
     _write_module(
         tmp_path,
         """
@@ -794,9 +832,10 @@ def arithmetic(frame: DataFrameF64[FloatRow]) -> SeriesF64:
     )
     mixed = _function(analysis, "app.kernels.mixed")
     arithmetic = _function(analysis, "app.kernels.arithmetic")
-    assert any(item.code == "RXTP-PANDAS-012" for item in mixed.diagnostics)
-    assert any(item.code == "RXTP-PANDAS-013" for item in arithmetic.diagnostics)
     assert mixed.route == arithmetic.route == "fallback-python"
+    assert mixed.plugin_claims == arithmetic.plugin_claims == []
+    for function in (mixed, arithmetic):
+        assert not any(item.code.startswith("RXTP-PANDAS-") for item in function.diagnostics)
 
 
 def test_analyzer_dynamic_axis_remains_core_owned(tmp_path: Path) -> None:

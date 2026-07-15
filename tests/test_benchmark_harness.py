@@ -24,6 +24,7 @@ from benchmarks.bench_product_routes import (
     _schedule_balance,
     _sustained_break_even,
 )
+from benchmarks.cases import KERNEL_SOURCE, make_case
 
 
 def _tree_clean() -> bool:
@@ -59,6 +60,15 @@ def _valid_series_cell(repetitions: int = 9, *, size: int = 1000) -> dict[str, A
             },
         },
     }
+
+
+def test_authoritative_fixture_is_series_only() -> None:
+    assert "SeriesF64" in KERNEL_SOURCE
+    assert "DataFrame" not in KERNEL_SOURCE
+    assert ".apply(" not in KERNEL_SOURCE
+    assert make_case("series.map", 10).route == "series.map"
+    with pytest.raises(ValueError, match="unknown benchmark route"):
+        make_case("dataframe.apply", 10)
 
 
 # --- E: counterbalance without odd-repeat lane bias -------------------------
@@ -182,9 +192,9 @@ def test_valid_series_cell_is_headline_eligible() -> None:
     assert reasons == []
 
 
-def test_dataframe_route_is_never_headline_eligible() -> None:
+def test_unknown_route_is_never_headline_eligible() -> None:
     cell = _valid_series_cell()
-    cell["route"] = "dataframe.apply"
+    cell["route"] = "prototype.route"
     eligible, reasons = _headline_eligibility(cell, repetitions=9, null_floor_median_ns=1_000.0)
     assert eligible is False
     assert "route-not-headline-surface" in reasons
@@ -397,6 +407,7 @@ def test_plugin_direct_url_validator_accepts_wheel_mode() -> None:
     shutil.which("cargo") is None or shutil.which("rustc") is None,
     reason="preflight records the Rust toolchain versions",
 )
+@pytest.mark.needs_cargo
 def test_preflight_gathers_provenance_on_a_clean_tree() -> None:
     if not _tree_clean():
         pytest.skip("preflight is fail-closed on a dirty worktree; run on a clean tree")

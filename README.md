@@ -1,8 +1,8 @@
 # rextio-pandas
 
-`rextio-pandas` is a private, unpublished incubator for narrow pandas numeric
-lowering. It requires Rextio plugin API 1.3 from exact core commit
-`ac2b79d304f13abaaecaf7714f897574c3b6256f`, which lives only in the private
+`rextio-pandas` is a private, unpublished incubator for audited pandas
+`Series.map` lowering. It requires Rextio plugin API 1.3 from exact core commit
+`2bd1d1da0cf59e97d1659606bcb1ec12491e032c`, which lives only in the private
 `rextio/rextio-core-next` repository; the released `rextio==0.1.2` package
 shares that version number but implements API 1.2 and cannot load this plugin.
 The dependency is therefore a credential-free exact-commit VCS pin
@@ -53,60 +53,51 @@ materializes the result once. The successful result preserves exact Series
 class, dtype, values (including NaN/Inf/signed zero), order, RangeIndex, name,
 and default metadata.
 
-## DataFrame.apply surface
+Both materialized Series types own the shared Rust boundary support through
+plugin API 1.3 `PluginType.helpers`. Core therefore emits the extract/type/
+materialize definitions for an accepted Series signature even when the
+function contains no plugin claim, and exact-text dedup emits the same support
+only once when a `Series.map` claim also contributes it.
 
-The second implemented source form is exactly:
+## DataFrame.apply prototype / NO-GO
 
-```python
-from rextio_pandas.types import DataFrameF64, SeriesF64
+`DataFrame.apply(axis=1)` is **not a supported native route**. The plugin does
+not register `pandas.DataFrame.apply` as a covered symbol, does not register
+`DataFrameF64` as a native plugin type, and its normal claim/lower dispatch can
+never produce an apply claim. Check/build reports therefore retain apply code
+as ordinary Python fallback and never expose a hidden native product route.
 
-class Row:
-    left: float
-    right: float
+The repository retains clearly named private prototype helpers and pinned
+characterization evidence for a homogeneous-float64 row loop. That experiment
+cannot be promoted safely: the frozen `FrameColumnApply` authority digest
+checks module/qualname, MRO names, `axis`, and selected property/method code,
+but omits executable behavior such as `apply()`, `__new__`,
+`__getattribute__`, forged base behavior, and the complete reachable global
+graph. A same-module/same-qualname replacement can copy every digested member,
+produce the same digest, add an unchecked `apply()`, and change ordinary pandas
+results from `[11.0, 22.0]` to `[-999.0, -999.0]` while a compiled row loop
+would remain unchanged. Extending another partial authority graph is not an
+acceptable release gate.
 
-def choose(row) -> float:
-    return row["left"] if row["left"] >= 0.0 else -row["right"]
+The side-effect-free `DataFrameF64[Schema]` marker remains importable only so
+the research characterization is reproducible; it is not in the plugin's
+registered type vocabulary and conveys no native-support promise. Mixed-row
+coercion and NumPy-scalar warning/overflow semantics remain additional NO-GO
+constraints.
 
-def run(frame: DataFrameF64[Row]) -> SeriesF64:
-    return frame.apply(choose, axis=1)
-```
-
-The schema is a nonempty simple class whose unique ordered fields are all
-`float`. The row parameter is unannotated and may be read only as
-`row["field"]`. The closed body allows finite float literals, unary negation,
-same-type comparisons, boolean composition, and a float conditional. Every
-binary operation, scalar call, attribute/dynamic/missing field, non-float
-branch, mixed/int/object/nullable column, axis other than the non-bool integer
-literal `1`, positional/omitted/dynamic axis, keyword callable, and extra
-keyword (`raw`, `result_type`, `args`, or kwargs) remains outside the route.
-
-At runtime the input must be an exact, nonempty `pandas.DataFrame` with at
-least one homogeneous non-nullable NumPy `float64` column. Columns are unique
-ordered strings exactly matching the schema and `columns.name is None`; the
-same canonical index/default-metadata/method-identity restrictions as Series
-map. C/F/strided storage is copied by logical ndarray indexing. Contract
-misses raise the documented stable `TypeError`, never a silent deopt.
-
-The output is an exact float64 Series with default name/metadata and the
-canonical input RangeIndex. The row UDF runs in a GIL-detached Rust
-`outer_iter()` loop without pandas indexing or Python calls. Mixed numeric rows
-are deliberately NO-GO because pandas coerces them before the UDF; homogeneous
-integer rows are NO-GO because NumPy-scalar warnings and overflow semantics
-are observable.
-
-All annotation markers import without pandas or Rextio. Both eager annotations
-and `from __future__ import annotations` are supported by the static analyzer.
+All annotation markers import without pandas or Rextio. The registered
+`SeriesF64`/`SeriesI64` spellings support eager annotations and
+`from __future__ import annotations`.
 
 ## Benchmarks
 
 `python -m benchmarks.bench_product_routes` builds and measures the actual
-generated wrapper. Native/fallback pairs include validation, copies,
-conversion, result construction/destruction, raw samples, paired bootstrap
-intervals, correctness digests, provenance, and a null-call floor. Default
-apply, a semantically equivalent positional `apply(raw=True)` UDF, vectorized
-NumPy/pandas, and cold/warm Numba are context-only lanes. DataFrame results are
-not eligible for a headline speedup claim while mixed-row and general
-NumPy-scalar semantics remain unresolved.
+generated **Series.map-only** wrapper. Native/fallback pairs include validation,
+copies, conversion, result construction/destruction, raw samples, paired
+bootstrap intervals, correctness digests, provenance, and a null-call floor.
+Vectorized NumPy/pandas and cold/warm Numba remain context-only lanes.
+DataFrame.apply has no product cell, context cell, break-even entry, or speedup
+claim in the authoritative benchmark.
 
 ## Install for development
 

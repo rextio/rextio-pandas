@@ -141,7 +141,7 @@ _NO_DEFAULT_ATTR = "no_default"
 # ``FrameColumnApply``/``FrameRowApply`` are classes, validated by a frozen
 # type-tagged structural digest over the live class identity, MRO chain, the
 # ``axis`` selector, and the code of the property getters + plain methods that
-# drive the covered ``DataFrame.apply(axis=1)`` path (``axis`` is 1 for
+# drove the private ``DataFrame.apply(axis=1)`` prototype (``axis`` is 1 for
 # ``FrameColumnApply`` and 0 for ``FrameRowApply``). None of these is derived
 # from the live mutable ``pandas.core.apply`` binding at lowering or runtime; the
 # expected digests are frozen constants, and drift tests re-derive them from the
@@ -1380,14 +1380,18 @@ def _render_row_expr(expr: CallableBodyExpr, field_indexes: dict[str, int]) -> s
     raise ValueError(f"unsupported audited row node at lower time: {expr.kind!r}")
 
 
-def dataframe_apply_helpers(
+def prototype_dataframe_apply_helpers(
     schema: SchemaMeta,
     meta: CallableMeta,
 ) -> tuple[str, tuple[str, ...]]:
-    """Return a schema-bound pure row loop and its GIL-detaching wrapper."""
+    """Return research-only row-loop snippets for the NO-GO apply prototype.
+
+    The plugin never dispatches this helper. It remains solely so the pinned
+    semantic characterization and authority-bypass evidence stay reproducible.
+    """
     expression = meta.body.expression
     if expression is None:
-        raise ValueError("DataFrame.apply lowering requires an available body")
+        raise ValueError("DataFrame.apply prototype generation requires an available body")
     identity = json.dumps(
         {
             "route": "dataframe.apply.axis1",
@@ -1436,4 +1440,8 @@ def dataframe_apply_helpers(
     return wrapper_name, (hot, wrapper)
 
 
-__all__ = ["boundary_helpers", "dataframe_apply_helpers", "series_map_helpers"]
+__all__ = [
+    "boundary_helpers",
+    "prototype_dataframe_apply_helpers",
+    "series_map_helpers",
+]

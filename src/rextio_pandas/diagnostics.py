@@ -7,16 +7,15 @@ from rextio.plugins.api import ClaimSite, Rejected
 
 SERIES_F64 = "rextio-pandas/series-f64"
 SERIES_I64 = "rextio-pandas/series-i64"
-FRAME_F64 = "rextio-pandas/frame-f64"
+# Research-only key used by characterization fixtures. It is deliberately not
+# registered in the plugin type vocabulary and cannot reach claim/lower.
+PROTOTYPE_FRAME_F64 = "rextio-pandas/prototype-frame-f64"
 
 SERIES_TYPES = frozenset({SERIES_F64, SERIES_I64})
 
 DIAGNOSTIC_SHAPE = "RXTP-PANDAS-001"
 DIAGNOSTIC_SIGNATURE = "RXTP-PANDAS-002"
 DIAGNOSTIC_BODY = "RXTP-PANDAS-003"
-DIAGNOSTIC_APPLY_SHAPE = "RXTP-PANDAS-011"
-DIAGNOSTIC_APPLY_SCHEMA = "RXTP-PANDAS-012"
-DIAGNOSTIC_APPLY_BODY = "RXTP-PANDAS-013"
 
 RUNTIME_ERRORS = {
     "version": (
@@ -43,6 +42,8 @@ RUNTIME_ERRORS = {
     "series_i64": (
         "rextio-pandas SeriesI64 contract requires non-nullable NumPy-backed int64 storage"
     ),
+    # Retained only by the unregistered DataFrame research prototype. No public
+    # claim/lower path emits these errors.
     "frame_class": "rextio-pandas DataFrame contract requires an exact pandas.DataFrame",
     "frame_empty": (
         "rextio-pandas DataFrameF64 contract does not accept a DataFrame with zero rows"
@@ -86,13 +87,10 @@ def reject(site: ClaimSite, code: str, message: str, suggestion: str) -> Rejecte
 
 
 __all__ = [
-    "DIAGNOSTIC_APPLY_BODY",
-    "DIAGNOSTIC_APPLY_SCHEMA",
-    "DIAGNOSTIC_APPLY_SHAPE",
     "DIAGNOSTIC_BODY",
     "DIAGNOSTIC_SHAPE",
     "DIAGNOSTIC_SIGNATURE",
-    "FRAME_F64",
+    "PROTOTYPE_FRAME_F64",
     "RUNTIME_ERRORS",
     "SERIES_F64",
     "SERIES_I64",

@@ -16,13 +16,9 @@ from rextio.plugins.api import (
 )
 
 from rextio_pandas.diagnostics import (
-    DIAGNOSTIC_APPLY_BODY,
-    DIAGNOSTIC_APPLY_SCHEMA,
-    DIAGNOSTIC_APPLY_SHAPE,
     DIAGNOSTIC_BODY,
     DIAGNOSTIC_SHAPE,
     DIAGNOSTIC_SIGNATURE,
-    FRAME_F64,
     SERIES_F64,
     SERIES_I64,
     SERIES_TYPES,
@@ -30,7 +26,6 @@ from rextio_pandas.diagnostics import (
 )
 
 SERIES_MAP_RULE = "rextio-pandas/series-map"
-DATAFRAME_APPLY_RULE = "rextio-pandas/dataframe-apply-axis1"
 
 _COMPARISONS = frozenset({"==", "!=", "<", "<=", ">", ">="})
 _FLOAT_BINOPS = frozenset({"+", "-", "*"})
@@ -205,7 +200,13 @@ def _audit_row_expr(
 
 
 def audit_frame_callable(meta: CallableMeta, schema: SchemaMeta) -> BodyAudit:
-    """Validate the exact homogeneous-f64 row signature, schema, and body."""
+    """Characterize the private homogeneous-f64 row prototype.
+
+    This audit is retained for research evidence only. No public claim or lower
+    dispatch calls it: DataFrame.apply is a fail-closed NO-GO because the full
+    executable pandas authority cannot be bounded by the prototype's partial
+    class/global digest.
+    """
     if not schema.fields:
         return _fail("the declared DataFrame schema must contain at least one field")
     if any(field.field_type != "float" for field in schema.fields):
@@ -267,84 +268,16 @@ def _claim_series_map(site: ClaimSite) -> ClaimResult:
     return Claimed(rule_id=SERIES_MAP_RULE, result_type=result_key)
 
 
-def _claim_dataframe_apply(site: ClaimSite) -> ClaimResult:
-    receiver = site.receiver
-    if receiver is None or receiver.arg_type != FRAME_F64:
-        return NotCovered()
-    if site.target.rpartition(".")[2] != "apply":
-        return NotCovered()
-    if receiver.expr_kind != "name" or not receiver.is_safe:
-        return reject(
-            site,
-            DIAGNOSTIC_APPLY_SHAPE,
-            "the DataFrame receiver must be a plain local or parameter name",
-            "Bind the exact annotated DataFrame to a plain name before apply.",
-        )
-    if len(site.operand_types) != 1 or len(site.callables) != 1:
-        return reject(
-            site,
-            DIAGNOSTIC_APPLY_SHAPE,
-            "only frame.apply(udf, axis=1) with one positional callable is supported",
-            "Pass one bare row UDF followed only by the literal keyword axis=1.",
-        )
-    if len(site.keywords) != 1 or site.keywords[0].name != "axis":
-        return reject(
-            site,
-            DIAGNOSTIC_APPLY_SHAPE,
-            "axis=1 must be the sole keyword",
-            "Write exactly frame.apply(udf, axis=1); remove raw/result_type/args/kwargs.",
-        )
-    axis = site.keywords[0].literal
-    if not axis.is_literal:
-        # Dynamic keyword expressions and **kwargs are core-owned pre-offer
-        # failures. If a malformed synthetic site reaches us, do not mislabel it
-        # with a plugin diagnostic.
-        return NotCovered()
-    if isinstance(axis.value, bool) or axis.value != 1:
-        return reject(
-            site,
-            DIAGNOSTIC_APPLY_SHAPE,
-            "axis must be the non-bool integer literal 1",
-            'Use axis=1 exactly; axis=True and axis="columns" are rejected.',
-        )
-    schema = receiver.schema
-    if schema is None:
-        return reject(
-            site,
-            DIAGNOSTIC_APPLY_SCHEMA,
-            "DataFrameF64 must be parameterized by a valid declared schema",
-            "Annotate the receiver as DataFrameF64[Row] where Row contains only float fields.",
-        )
-    audit = audit_frame_callable(site.callables[0], schema)
-    if not audit.accepted:
-        code = (
-            DIAGNOSTIC_APPLY_SCHEMA
-            if "schema" in audit.reason or "parameter" in audit.reason or "return" in audit.reason
-            else DIAGNOSTIC_APPLY_BODY
-        )
-        return reject(
-            site,
-            code,
-            audit.reason,
-            'Use literal row["field"] reads and only comparisons, boolean composition, unary negation, and a float conditional.',
-        )
-    return Claimed(rule_id=DATAFRAME_APPLY_RULE, result_type=SERIES_F64)
-
-
 def claim(site: ClaimSite, config: RextioConfig) -> ClaimResult:
-    """Claim only the exact Series map surface; everything else stays with core."""
+    """Claim only Series.map; DataFrame.apply and unrelated pandas stay fallback."""
     del config
     if site.kind != "call":
         return NotCovered()
-    result = _claim_series_map(site)
-    if not isinstance(result, NotCovered):
-        return result
-    return _claim_dataframe_apply(site)
+    return _claim_series_map(site)
 
 
 __all__ = [
     "BodyAudit",
-    "DATAFRAME_APPLY_RULE",
     "SERIES_MAP_RULE",
     "audit_frame_callable",
     "audit_series_callable",

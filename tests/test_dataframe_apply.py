@@ -611,6 +611,10 @@ def test_series_map_dynamic_authorities_are_frozen_and_checked_live() -> None:
     assert 'getattr("map_infer")' in source
     assert "!= __RXTPD_ALGORITHMS_MAP_ARRAY_DIGEST" in source
     assert "!= __RXTPD_LIB_MAP_INFER_DIGEST" in source
+    # Plain CPython functions are bound to PyO3's non-mutable exact type,
+    # never to the user-mutable ``types.FunctionType`` module attribute.
+    assert "is_exact_instance_of::<pyo3::types::PyFunction>()" in source
+    assert 'py.import("types")' not in source
     assert '"_cython_3_1_4"' in source
     assert '"cython_function_or_method"' in source
     assert "descriptor.is_exact_instance(&function_type)" in source

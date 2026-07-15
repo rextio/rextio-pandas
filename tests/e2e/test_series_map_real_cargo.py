@@ -641,6 +641,77 @@ else:
     assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
 
 
+def test_mutable_function_type_anchor_cannot_accept_forged_callable(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import types
+import numpy as np
+import pandas as pd
+import pandas.core.algorithms as algorithms
+import pandas.core.base as base
+import pandas.core.generic as generic
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_map_values_descriptor = base.IndexOpsMixin.__dict__["_map_values"]
+_map_array_descriptor = algorithms.map_array
+_constructor_property = pd.Series.__dict__["_constructor"]
+_finalize_descriptor = generic.NDFrame.__dict__["__finalize__"]
+_to_numpy_descriptor = base.IndexOpsMixin.__dict__["to_numpy"]
+
+def _forged_map_array(arr, mapper, na_action=None, convert=True):
+    return np.full(len(arr), -981.0, dtype=np.float64)
+
+class _ForgedFunction:
+    def __init__(self, original, replacement=None):
+        self.__module__ = original.__module__
+        self.__qualname__ = original.__qualname__
+        self.__globals__ = original.__globals__
+        self.__closure__ = original.__closure__
+        self.__code__ = original.__code__
+        self.__kwdefaults__ = original.__kwdefaults__
+        self.__defaults__ = original.__defaults__
+        self._original = original
+        self._replacement = replacement
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self
+        return lambda *args, **kwargs: self(instance, *args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        target = self._replacement or self._original
+        return target(*args, **kwargs)
+
+pd.Series.map = _ForgedFunction(_map_descriptor)
+base.IndexOpsMixin._map_values = _ForgedFunction(_map_values_descriptor)
+algorithms.map_array = _ForgedFunction(_map_array_descriptor, _forged_map_array)
+pd.Series._constructor = property(_ForgedFunction(_constructor_property.fget))
+generic.NDFrame.__finalize__ = _ForgedFunction(_finalize_descriptor)
+base.IndexOpsMixin.to_numpy = _ForgedFunction(_to_numpy_descriptor)
+types.FunctionType = _ForgedFunction
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-981.0, -981.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"mutable FunctionType anchor accepted forged callables: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
 def test_map_values_algorithms_global_replacement_is_rejected(
     project: CertifiedProject,
 ) -> None:

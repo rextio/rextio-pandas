@@ -865,8 +865,7 @@ def _validator_rs(key: str, error: dict[str, str]) -> str:
         )
     else:
         type_check = (
-            '    let types_module = py.import("types")?;\n'
-            '    if !descriptor.is_exact_instance(&types_module.getattr("FunctionType")?) {\n'
+            "    if !descriptor.is_exact_instance_of::<pyo3::types::PyFunction>() {\n"
             "        return Err(__rxtpd_type_error(error));\n    }\n"
         )
     parts = [
@@ -957,8 +956,7 @@ def _function_authority_validator_rs(key: str, error_expr: str) -> str:
         ") -> pyo3::PyResult<()> {\n"
         "    use pyo3::types::PyAnyMethods;\n"
         "    let error = " + error_expr + ";\n"
-        '    let types_module = py.import("types")?;\n'
-        '    if !object.is_exact_instance(&types_module.getattr("FunctionType")?) {\n'
+        "    if !object.is_exact_instance_of::<pyo3::types::PyFunction>() {\n"
         "        return Err(__rxtpd_type_error(error));\n    }\n"
         '    if object.getattr("__module__")?.extract::<String>().map_err(|_| '
         "__rxtpd_type_error(error))? != " + module + " {\n"
@@ -1003,8 +1001,6 @@ def _class_authority_validator_rs(key: str, error_expr: str) -> str:
         ") -> pyo3::PyResult<()> {\n",
         "    use pyo3::types::{PyAnyMethods, PyInt, PyType, PyTuple, PyTupleMethods};\n",
         "    let error = " + error_expr + ";\n",
-        '    let types_module = py.import("types")?;\n',
-        '    let function_type = types_module.getattr("FunctionType")?;\n',
         '    let property_type = py.import("builtins")?.getattr("property")?;\n',
         "    if object.cast::<PyType>().is_err() {\n",
         "        return Err(__rxtpd_type_error(error));\n    }\n",
@@ -1061,7 +1057,7 @@ def _class_authority_validator_rs(key: str, error_expr: str) -> str:
             '|| !member.getattr("fdel")?.is_none() {\n'
             "            return Err(__rxtpd_type_error(error));\n        }\n"
             '        let fget = member.getattr("fget")?;\n'
-            "        if !fget.is_exact_instance(&function_type) {\n"
+            "        if !fget.is_exact_instance_of::<pyo3::types::PyFunction>() {\n"
             "            return Err(__rxtpd_type_error(error));\n        }\n"
             '        let code = fget.getattr("__code__")?;\n'
             "        __rxtpd_push_str(&mut buffer, &__rxtpd_code_digest(&code, error)?);\n"
@@ -1080,7 +1076,7 @@ def _class_authority_validator_rs(key: str, error_expr: str) -> str:
             "        __rxtpd_push_str(&mut buffer, " + rn + ");\n"
             "        let member = class_dict.get_item(" + rn + ")"
             ".map_err(|_| __rxtpd_type_error(error))?;\n"
-            "        if !member.is_exact_instance(&function_type) {\n"
+            "        if !member.is_exact_instance_of::<pyo3::types::PyFunction>() {\n"
             "            return Err(__rxtpd_type_error(error));\n        }\n"
             '        let code = member.getattr("__code__")?;\n'
             "        __rxtpd_push_str(&mut buffer, &__rxtpd_code_digest(&code, error)?);\n"

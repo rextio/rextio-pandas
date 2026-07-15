@@ -28,10 +28,11 @@ from rextio_pandas.claim.map_apply import DATAFRAME_APPLY_RULE
 from rextio_pandas.diagnostics import FRAME_F64, SERIES_F64
 from rextio_pandas.plugin import RextioPandasPlugin
 from rextio_pandas.rust_snippets.map_apply import (
+    _AUTHORITY_FINGERPRINTS,
     _rust_string,
     boundary_helpers,
+    compute_authority_fingerprint,
     dataframe_apply_helpers,
-    trusted_method_fingerprints,
 )
 
 from conftest import pandas_registry
@@ -319,27 +320,83 @@ def test_unicode_schema_field_lowers_to_braced_rust_unicode_escape() -> None:
     assert re.search(r"\\u(?!\{)", source) is None
 
 
-def test_boundary_uses_codeobject_identity_not_forgeable_names() -> None:
+def test_boundary_uses_immutable_semantic_fingerprint() -> None:
     source = boundary_helpers()
-    fingerprints = trusted_method_fingerprints()
-    # The forgeable ``__module__``/``__qualname__`` comparison is gone; only the
-    # explanatory comment may mention them, never a runtime getattr.
-    assert 'getattr("__module__")' not in source
-    assert 'getattr("__qualname__")' not in source
-    assert "expected_module" not in source
-    # Immutable per-method bytecode fingerprints are embedded and compared.
-    for constant in (
-        "__RXTPD_SERIES_MAP_CO",
-        "__RXTPD_SERIES_TO_NUMPY_CO",
-        "__RXTPD_FRAME_APPLY_CO",
-        "__RXTPD_FRAME_TO_NUMPY_CO",
+    # The frozen authority fingerprints are embedded as string constants and
+    # compared against a freshly computed live digest at runtime.
+    for constant, key in (
+        ("__RXTPD_SERIES_MAP_FP", "series_map"),
+        ("__RXTPD_SERIES_TO_NUMPY_FP", "series_to_numpy"),
+        ("__RXTPD_FRAME_APPLY_FP", "frame_apply"),
+        ("__RXTPD_FRAME_TO_NUMPY_FP", "frame_to_numpy"),
     ):
-        assert f"const {constant}: &[u8] =" in source
-        assert f"{constant}," in source
-    assert "co_code.as_slice() != trusted_co_code" in source
-    # The embedded fingerprint is the real pinned pandas bytecode.
-    first_byte = fingerprints["frame_apply"][0]
-    assert f"0x{first_byte:02x}u8" in source
+        assert f'const {constant}: &str = "{_AUTHORITY_FINGERPRINTS[key]}"' in source
+        assert f"!= {constant}" in source
+    assert "fn __rxtpd_method_fingerprint(" in source
+    # Full semantic coverage, not just bytecode: defaults, kwdefaults, globals
+    # provenance, closure, constants/names, exception table.
+    assert 'descriptor.getattr("__defaults__")?' in source
+    assert 'descriptor.getattr("__kwdefaults__")?' in source
+    assert 'descriptor.getattr("__globals__")?.is(&module_dict)' in source
+    assert 'descriptor.getattr("__closure__")?.is_none()' in source
+    assert 'code.getattr("co_consts")?' in source
+    assert 'code.getattr("co_exceptiontable")?' in source
+    # Fingerprint is captured from a known-good authority, never regenerated from
+    # a possibly-patched live descriptor at lowering time.
+    assert "co_code.as_slice() != trusted_co_code" not in source
+    # A hardcoded Python-minor gate documents the fail-closed version pin.
+    assert "co_flags" in source
+    for module_name in (
+        "pandas.core.series",
+        "pandas.core.base",
+        "pandas.core.frame",
+    ):
+        assert f'"{module_name}"' in source
+
+
+def test_authority_fingerprints_match_pinned_pandas() -> None:
+    # The frozen constants must equal the live pinned pandas so drift is caught
+    # loudly, not silently trusted.
+    import pandas as pd
+
+    live = {
+        "series_map": (pd.Series.__dict__["map"], "pandas.core.series"),
+        "series_to_numpy": (pd.Series.to_numpy, "pandas.core.base"),
+        "frame_apply": (pd.DataFrame.__dict__["apply"], "pandas.core.frame"),
+        "frame_to_numpy": (pd.DataFrame.__dict__["to_numpy"], "pandas.core.frame"),
+    }
+    for key, (function, module_name) in live.items():
+        assert compute_authority_fingerprint(function, module_name) == _AUTHORITY_FINGERPRINTS[key]
+
+
+def test_changed_defaults_or_globals_change_the_fingerprint() -> None:
+    import types
+
+    import pandas as pd
+
+    original = pd.Series.__dict__["map"]
+    base = compute_authority_fingerprint(original, "pandas.core.series")
+
+    changed_defaults = types.FunctionType(
+        original.__code__,
+        original.__globals__,
+        original.__name__,
+        ("ignore",),  # na_action default flipped from None
+        original.__closure__,
+    )
+    changed_defaults.__qualname__ = original.__qualname__
+    changed_defaults.__module__ = original.__module__
+    assert compute_authority_fingerprint(changed_defaults, "pandas.core.series") != base
+
+    foreign_globals = types.FunctionType(
+        original.__code__,
+        dict(original.__globals__),  # a caller-supplied copy, not the module dict
+        original.__name__,
+        original.__defaults__,
+        original.__closure__,
+    )
+    with pytest.raises(TypeError):
+        compute_authority_fingerprint(foreign_globals, "pandas.core.series")
 
 
 def test_boundary_rejects_extension_dtypes_before_conversion() -> None:

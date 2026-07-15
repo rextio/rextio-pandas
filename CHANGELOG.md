@@ -66,3 +66,37 @@
   counterbalanced 5:4/4:5 seeded schedule per cell, and make
   `headline_eligible` fail closed on correctness, route/provenance, schedule
   balance, near-floor timing, missing samples, or unstable intervals.
+
+### Adversarial post-review follow-up
+
+- Replace the `co_code`-only method check (bypassable via changed
+  defaults/globals while diverging native vs fallback) with an immutable
+  semantic fingerprint over the full code-object (bytecode, constants, names,
+  varnames, flags, arg counts, stack size, exception table), `__defaults__`,
+  `__kwdefaults__`, and module/qualname, plus runtime proof of an empty closure
+  and that `__globals__` is the pinned defining module's own dict. The expected
+  fingerprint is a frozen known-good CPython 3.11 / pandas 2.3.3 / numpy 2.3.5
+  authority constant (a Python-minor gate fails closed off-pin), never
+  regenerated from the live descriptor at lowering. Adds real-Cargo regressions
+  for changed defaults, changed globals, forged constants, replacement,
+  deletion, non-function, and `to_numpy` instance shadowing.
+- Make the provenance tests mode-aware (editable proves the resolved checkout
+  path + Git SHA; VCS proves the credential-free URL + commit; wheel proves the
+  wheel/import/entry-point) instead of matching a directory-name substring.
+- Make the benchmark preflight genuinely fail-closed: reject dirty core/plugin
+  trees, a wrong installed core/plugin (per parsed `direct_url.json` mode), a
+  foreign or non-loading entry point, off-pin pandas/NumPy, and generated/native
+  import paths outside the freshly built project — all before any build/timing.
+- Preserve and verify both `check.json` and `build.json` (native-build agrees
+  with the checked routes), recording report paths/digests, the native artifact
+  path/digest, and the imported timing module paths; copy raw reports into
+  `benchmarks/results/evidence/` on a full run only.
+- Remove the odd-repeat lane bias by assigning the extra first position from the
+  per-cell seed (not always native); recompute counterbalance from the raw
+  schedule in the eligibility gate.
+- Isolate smoke output to an ignored temp location that can never overwrite the
+  tracked `latest.json`; only a full run atomically replaces `latest.json` and
+  its `evidence/` directory, with cleanup scoped to those harness-owned files.
+- Report a *sustained* measured Series break-even (favorable at the size and
+  every larger measured size, all eligible; never interpolated) and record the
+  installed Numba version.

@@ -378,6 +378,69 @@ else:
     assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
 
 
+@pytest.mark.parametrize(
+    "setup",
+    [
+        # Same original code object, but a changed default (na_action="ignore").
+        (
+            "import types\n"
+            "_orig = pd.Series.__dict__['map']\n"
+            "_patched = types.FunctionType(_orig.__code__, _orig.__globals__, "
+            "_orig.__name__, ('ignore',), _orig.__closure__)\n"
+            "_patched.__qualname__ = _orig.__qualname__\n"
+            "_patched.__module__ = _orig.__module__\n"
+            "pd.Series.map = _patched"
+        ),
+        # Same bytecode, changed constants (forged code object).
+        (
+            "import types\n"
+            "_orig = pd.Series.__dict__['map']\n"
+            "_code = _orig.__code__.replace(co_consts=_orig.__code__.co_consts + ('rxt-tamper',))\n"
+            "_patched = types.FunctionType(_code, _orig.__globals__, _orig.__name__, "
+            "_orig.__defaults__, _orig.__closure__)\n"
+            "_patched.__qualname__ = _orig.__qualname__\n"
+            "_patched.__module__ = _orig.__module__\n"
+            "pd.Series.map = _patched"
+        ),
+        # map replaced by a non-function.
+        "pd.Series.map = 5",
+        # Series.to_numpy with the original code object but foreign globals dict.
+        (
+            "import types\n"
+            "_orig = pd.Series.to_numpy\n"
+            "_patched = types.FunctionType(_orig.__code__, dict(_orig.__globals__), "
+            "_orig.__name__, _orig.__defaults__, _orig.__closure__)\n"
+            "_patched.__qualname__ = _orig.__qualname__\n"
+            "_patched.__module__ = _orig.__module__\n"
+            "pd.Series.to_numpy = _patched"
+        ),
+        # Series.to_numpy ordinary replacement.
+        "pd.Series.to_numpy = lambda self, *a, **k: self.values",
+        # Instance to_numpy shadowing.
+        "s.__dict__['to_numpy'] = lambda *a, **k: None",
+    ],
+)
+def test_series_semantic_identity_tampering_is_rejected(
+    project: CertifiedProject, setup: str
+) -> None:
+    body = f"""
+import pandas as pd
+from pandas_app.kernels import map_f64
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+{setup}
+try:
+    map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("semantic tampering was accepted")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
 def test_runtime_guards_stay_active_under_python_dash_o(project: CertifiedProject) -> None:
     # The guards are generated Rust, so ``python -O`` (which strips Python
     # ``assert`` statements) cannot disable them.

@@ -17,47 +17,93 @@ _RUST_SCALAR = {SERIES_F64: "f64", SERIES_I64: "i64"}
 
 PINNED_PANDAS_VERSION = "2.3.3"
 PINNED_NUMPY_VERSION = "2.3.5"
+PINNED_PYTHON = (3, 11)
+
+# Immutable known-good semantic fingerprints of the four trusted pandas methods,
+# captured once from the pinned authority (CPython 3.11 / pandas 2.3.3 /
+# numpy 2.3.5) by ``compute_authority_fingerprint`` below. These are frozen
+# constants embedded into the generated Rust; they are NOT regenerated from
+# whatever descriptor happens to exist at lowering time, so a pandas patched
+# before lowering can never become the trusted value. The fingerprint covers the
+# full executable code-object semantics (bytecode, constants, names, varnames,
+# flags, arg counts, stack size, exception table), the function ``__defaults__``
+# and ``__kwdefaults__``, and the module/qualname; the runtime guard additionally
+# proves an empty closure and that ``__globals__`` is the pinned defining module's
+# own dictionary. A test asserts these constants still equal the live pinned
+# pandas so drift is caught loudly rather than silently trusted.
+_AUTHORITY_FINGERPRINTS = {
+    "series_map": "1b4d2b08156d20c13e03b240dd2b839e4f709ecefaae1aa68477a040ab3a3231",
+    "series_to_numpy": "eb587a2abea2f9fd8ebec3a7d8802b4cacb397f6a98348cedef1c90bd728eb0d",
+    "frame_apply": "c8503b0ab63075db08f7c6a8a810f3ba360fbe268743bde3bde6f29e44f7fff5",
+    "frame_to_numpy": "78b63dedde7c364344a7da200954ede760cfbb2d0115b423ee1835db53b1fee3",
+}
+_AUTHORITY_MODULES = {
+    "series_map": "pandas.core.series",
+    "series_to_numpy": "pandas.core.base",
+    "frame_apply": "pandas.core.frame",
+    "frame_to_numpy": "pandas.core.frame",
+}
+# Fields hashed, in the exact order mirrored by the generated Rust guard.
+_FINGERPRINT_REPR_FIELDS = (
+    "__module__",
+    "__qualname__",
+    "__defaults__",
+    "__kwdefaults__",
+    "co_argcount",
+    "co_posonlyargcount",
+    "co_kwonlyargcount",
+    "co_nlocals",
+    "co_flags",
+    "co_stacksize",
+    "co_names",
+    "co_varnames",
+    "co_freevars",
+    "co_cellvars",
+    "co_name",
+    "co_qualname",
+    "co_consts",
+)
 
 
-def _rust_bytes(data: bytes) -> str:
-    """Render ``data`` as a Rust ``&[u8]`` slice literal."""
-    return "&[" + ", ".join(f"0x{byte:02x}u8" for byte in data) + "]"
+def compute_authority_fingerprint(function: object, module_name: str) -> str:
+    """Compute the semantic fingerprint of one pinned pandas method.
 
-
-def trusted_method_fingerprints() -> dict[str, bytes]:
-    """Capture immutable code-object fingerprints from the pinned pandas.
-
-    The plugin lowers in an environment pinned to pandas 2.3.3 / numpy 2.3.5.
-    We snapshot the exact ``co_code`` bytecode of the trusted public
-    descriptors so the generated Rust can compare the live runtime descriptor
-    against a fingerprint that ``functools.wraps`` (which copies
-    ``__module__``/``__qualname__`` but never ``__code__``) cannot forge.
-    Extraction uses the pinned class/public descriptor, never an
-    instance-shadowable method.
+    This is the Python authority mirror of the generated Rust guard: identical
+    field order and serialization. It validates the same invariants (genuine
+    function type, empty closure, and ``__globals__`` identity with the pinned
+    defining module) and returns the SHA-256 hex digest. It is used only to
+    capture ``_AUTHORITY_FINGERPRINTS`` and to assert in tests that those frozen
+    constants still match the pinned pandas; the runtime never regenerates the
+    expected value.
     """
-    import numpy
-    import pandas
+    import sys
+    import types
 
-    if pandas.__version__ != PINNED_PANDAS_VERSION or numpy.__version__ != PINNED_NUMPY_VERSION:
-        raise RuntimeError(
-            "rextio-pandas lowering requires the pinned pandas "
-            f"{PINNED_PANDAS_VERSION}/numpy {PINNED_NUMPY_VERSION}; found "
-            f"pandas {pandas.__version__}/numpy {numpy.__version__}"
+    if not isinstance(function, types.FunctionType):
+        raise TypeError("pinned pandas descriptor is not a plain function")
+    module = sys.modules.get(module_name)
+    if module is None or function.__globals__ is not module.__dict__:
+        raise TypeError("pinned pandas descriptor has foreign globals provenance")
+    if function.__closure__ is not None:
+        raise TypeError("pinned pandas descriptor has a non-empty closure")
+    code = function.__code__
+    if code.co_freevars:
+        raise TypeError("pinned pandas descriptor has free variables")
+
+    digest = hashlib.sha256()
+    for field in _FINGERPRINT_REPR_FIELDS:
+        source = (
+            function
+            if field in {"__module__", "__qualname__", "__defaults__", "__kwdefaults__"}
+            else code
         )
-
-    descriptors = {
-        "series_map": pandas.Series.__dict__["map"],
-        "series_to_numpy": pandas.Series.to_numpy,
-        "frame_apply": pandas.DataFrame.__dict__["apply"],
-        "frame_to_numpy": pandas.DataFrame.__dict__["to_numpy"],
-    }
-    fingerprints: dict[str, bytes] = {}
-    for key, descriptor in descriptors.items():
-        code = getattr(descriptor, "__code__", None)
-        if code is None:  # pragma: no cover - pinned pandas always has code objects
-            raise RuntimeError(f"pinned pandas descriptor {key!r} has no code object")
-        fingerprints[key] = code.co_code
-    return fingerprints
+        digest.update(repr(getattr(source, field)).encode("utf-8"))
+        digest.update(b"\x00")
+    digest.update(code.co_code)
+    digest.update(b"\x00")
+    digest.update(code.co_exceptiontable)
+    digest.update(b"\x00")
+    return digest.hexdigest()
 
 
 _RUST_SIMPLE_ESCAPES = {
@@ -97,13 +143,17 @@ def _rust_string(value: str) -> str:
 def boundary_helpers() -> str:
     """Return shared one-shot validation/extraction/materialization helpers."""
     error = {name: _rust_string(message) for name, message in RUNTIME_ERRORS.items()}
-    codes = trusted_method_fingerprints()
-    series_map_co = _rust_bytes(codes["series_map"])
-    series_to_numpy_co = _rust_bytes(codes["series_to_numpy"])
-    frame_apply_co = _rust_bytes(codes["frame_apply"])
-    frame_to_numpy_co = _rust_bytes(codes["frame_to_numpy"])
+    series_map_fp = _rust_string(_AUTHORITY_FINGERPRINTS["series_map"])
+    series_to_numpy_fp = _rust_string(_AUTHORITY_FINGERPRINTS["series_to_numpy"])
+    frame_apply_fp = _rust_string(_AUTHORITY_FINGERPRINTS["frame_apply"])
+    frame_to_numpy_fp = _rust_string(_AUTHORITY_FINGERPRINTS["frame_to_numpy"])
+    series_map_module = _rust_string(_AUTHORITY_MODULES["series_map"])
+    series_to_numpy_module = _rust_string(_AUTHORITY_MODULES["series_to_numpy"])
+    frame_apply_module = _rust_string(_AUTHORITY_MODULES["frame_apply"])
+    frame_to_numpy_module = _rust_string(_AUTHORITY_MODULES["frame_to_numpy"])
     version = _rust_string(PINNED_PANDAS_VERSION)
     numpy_version = _rust_string(PINNED_NUMPY_VERSION)
+    py_major, py_minor = PINNED_PYTHON
     return f"""struct RxtPandasSeriesF64 {{
     values: numpy::ndarray::Array1<f64>,
     name: pyo3::Py<pyo3::PyAny>,
@@ -119,41 +169,88 @@ struct RxtPandasFrameF64 {{
     columns: Vec<String>,
 }}
 
-const __RXTPD_SERIES_MAP_CO: &[u8] = {series_map_co};
-const __RXTPD_SERIES_TO_NUMPY_CO: &[u8] = {series_to_numpy_co};
-const __RXTPD_FRAME_APPLY_CO: &[u8] = {frame_apply_co};
-const __RXTPD_FRAME_TO_NUMPY_CO: &[u8] = {frame_to_numpy_co};
+// Frozen known-good semantic fingerprints of the four trusted pandas methods,
+// captured once from CPython 3.11 / pandas 2.3.3 / numpy 2.3.5. These are
+// immutable constants, never regenerated from the live descriptor.
+const __RXTPD_SERIES_MAP_FP: &str = {series_map_fp};
+const __RXTPD_SERIES_TO_NUMPY_FP: &str = {series_to_numpy_fp};
+const __RXTPD_FRAME_APPLY_FP: &str = {frame_apply_fp};
+const __RXTPD_FRAME_TO_NUMPY_FP: &str = {frame_to_numpy_fp};
 
 fn __rxtpd_type_error(message: &'static str) -> pyo3::PyErr {{
     pyo3::exceptions::PyTypeError::new_err(message)
 }}
 
-fn __rxtpd_check_method(
-    method: &pyo3::Bound<'_, pyo3::PyAny>,
-    trusted_co_code: &[u8],
+fn __rxtpd_method_fingerprint(
+    py: pyo3::Python<'_>,
+    descriptor: &pyo3::Bound<'_, pyo3::PyAny>,
+    module_name: &str,
     error: &'static str,
-) -> pyo3::PyResult<()> {{
-    use pyo3::types::PyAnyMethods;
-    // A genuine pinned descriptor is a plain Python function. ``functools.wraps``
-    // copies ``__module__``/``__qualname__`` but never ``__code__``, so a
-    // forged replacement, a lambda, a builtin, deletion, or a malformed
-    // descriptor all fail the immutable bytecode-fingerprint comparison below
-    // and surface the stable ``TypeError`` rather than leaking Key/AttributeError.
-    if method.cast::<pyo3::types::PyFunction>().is_err() {{
+) -> pyo3::PyResult<String> {{
+    use pyo3::types::{{PyAnyMethods, PyBytes}};
+    // A genuine pinned descriptor is a plain Python function. Because ``co_code``
+    // alone omits defaults/kwdefaults/constants/names/flags/exception-table and
+    // globals provenance, this hashes the full executable code-object semantics
+    // AND the function ``__defaults__``/``__kwdefaults__``/module/qualname, after
+    // proving the type, an empty closure/freevars, and that ``__globals__`` is the
+    // pinned defining module's own dictionary (not a caller-supplied copy). The
+    // resulting digest is compared to a frozen authority constant, so changed
+    // defaults, changed globals, forged constants, replacement, deletion, or a
+    // malformed descriptor all surface the stable ``TypeError``.
+    let types_module = py.import("types")?;
+    let function_type = types_module.getattr("FunctionType")?;
+    if !descriptor.is_instance(&function_type)? {{
         return Err(__rxtpd_type_error(error));
     }}
-    let code = method
-        .getattr("__code__")
+    let modules = py.import("sys")?.getattr("modules")?;
+    let module = modules
+        .get_item(module_name)
         .map_err(|_| __rxtpd_type_error(error))?;
-    let co_code: Vec<u8> = code
-        .getattr("co_code")
-        .map_err(|_| __rxtpd_type_error(error))?
-        .extract()
-        .map_err(|_| __rxtpd_type_error(error))?;
-    if co_code.as_slice() != trusted_co_code {{
+    let module_dict = module.getattr("__dict__")?;
+    if !descriptor.getattr("__globals__")?.is(&module_dict) {{
         return Err(__rxtpd_type_error(error));
     }}
-    Ok(())
+    if !descriptor.getattr("__closure__")?.is_none() {{
+        return Err(__rxtpd_type_error(error));
+    }}
+    let code = descriptor.getattr("__code__")?;
+    if code.getattr("co_freevars")?.len()? != 0 {{
+        return Err(__rxtpd_type_error(error));
+    }}
+    let hasher = py.import("hashlib")?.call_method0("sha256")?;
+    let separator = PyBytes::new(py, b"\\x00");
+    let repr_fields = [
+        descriptor.getattr("__module__")?,
+        descriptor.getattr("__qualname__")?,
+        descriptor.getattr("__defaults__")?,
+        descriptor.getattr("__kwdefaults__")?,
+        code.getattr("co_argcount")?,
+        code.getattr("co_posonlyargcount")?,
+        code.getattr("co_kwonlyargcount")?,
+        code.getattr("co_nlocals")?,
+        code.getattr("co_flags")?,
+        code.getattr("co_stacksize")?,
+        code.getattr("co_names")?,
+        code.getattr("co_varnames")?,
+        code.getattr("co_freevars")?,
+        code.getattr("co_cellvars")?,
+        code.getattr("co_name")?,
+        code.getattr("co_qualname")?,
+        code.getattr("co_consts")?,
+    ];
+    for field in repr_fields {{
+        let encoded = field.repr()?.call_method1("encode", ("utf-8",))?;
+        hasher.call_method1("update", (encoded,))?;
+        hasher.call_method1("update", (&separator,))?;
+    }}
+    let co_code = code.getattr("co_code")?;
+    hasher.call_method1("update", (co_code,))?;
+    hasher.call_method1("update", (&separator,))?;
+    let co_exceptiontable = code.getattr("co_exceptiontable")?;
+    hasher.call_method1("update", (co_exceptiontable,))?;
+    hasher.call_method1("update", (&separator,))?;
+    let hexdigest: String = hasher.call_method0("hexdigest")?.extract()?;
+    Ok(hexdigest)
 }}
 
 fn __rxtpd_is_exact_numpy_dtype(
@@ -186,6 +283,12 @@ fn __rxtpd_pinned_series_class<'py>(
     if pandas_version != {version} || numpy_version != {numpy_version} {{
         return Err(__rxtpd_type_error({error["version"]}));
     }}
+    let version_info = py.import("sys")?.getattr("version_info")?;
+    let py_major: i64 = version_info.getattr("major")?.extract()?;
+    let py_minor: i64 = version_info.getattr("minor")?.extract()?;
+    if py_major != {py_major} || py_minor != {py_minor} {{
+        return Err(__rxtpd_type_error({error["version"]}));
+    }}
     let series_class = pandas.getattr("Series")?;
     let class_dict = series_class.getattr("__dict__")?;
     let map_descriptor = class_dict
@@ -200,12 +303,20 @@ fn __rxtpd_pinned_series_class<'py>(
     if !map_descriptor.is(&map_attribute) {{
         return Err(__rxtpd_type_error({error["series_method"]}));
     }}
-    __rxtpd_check_method(&map_descriptor, __RXTPD_SERIES_MAP_CO, {error["series_method"]})?;
-    __rxtpd_check_method(
+    if __rxtpd_method_fingerprint(py, &map_descriptor, {series_map_module}, {error["series_method"]})?
+        != __RXTPD_SERIES_MAP_FP
+    {{
+        return Err(__rxtpd_type_error({error["series_method"]}));
+    }}
+    if __rxtpd_method_fingerprint(
+        py,
         &to_numpy_attribute,
-        __RXTPD_SERIES_TO_NUMPY_CO,
+        {series_to_numpy_module},
         {error["series_method"]},
-    )?;
+    )? != __RXTPD_SERIES_TO_NUMPY_FP
+    {{
+        return Err(__rxtpd_type_error({error["series_method"]}));
+    }}
     Ok(series_class)
 }}
 
@@ -218,6 +329,12 @@ fn __rxtpd_pinned_frame_class<'py>(
     let pandas_version: String = pandas.getattr("__version__")?.extract()?;
     let numpy_version: String = numpy_module.getattr("__version__")?.extract()?;
     if pandas_version != {version} || numpy_version != {numpy_version} {{
+        return Err(__rxtpd_type_error({error["version"]}));
+    }}
+    let version_info = py.import("sys")?.getattr("version_info")?;
+    let py_major: i64 = version_info.getattr("major")?.extract()?;
+    let py_minor: i64 = version_info.getattr("minor")?.extract()?;
+    if py_major != {py_major} || py_minor != {py_minor} {{
         return Err(__rxtpd_type_error({error["version"]}));
     }}
     let frame_class = pandas.getattr("DataFrame")?;
@@ -237,12 +354,20 @@ fn __rxtpd_pinned_frame_class<'py>(
     if !apply_descriptor.is(&apply_attribute) || !to_numpy_descriptor.is(&to_numpy_attribute) {{
         return Err(__rxtpd_type_error({error["frame_method"]}));
     }}
-    __rxtpd_check_method(&apply_descriptor, __RXTPD_FRAME_APPLY_CO, {error["frame_method"]})?;
-    __rxtpd_check_method(
+    if __rxtpd_method_fingerprint(py, &apply_descriptor, {frame_apply_module}, {error["frame_method"]})?
+        != __RXTPD_FRAME_APPLY_FP
+    {{
+        return Err(__rxtpd_type_error({error["frame_method"]}));
+    }}
+    if __rxtpd_method_fingerprint(
+        py,
         &to_numpy_descriptor,
-        __RXTPD_FRAME_TO_NUMPY_CO,
+        {frame_to_numpy_module},
         {error["frame_method"]},
-    )?;
+    )? != __RXTPD_FRAME_TO_NUMPY_FP
+    {{
+        return Err(__rxtpd_type_error({error["frame_method"]}));
+    }}
     Ok(frame_class)
 }}
 

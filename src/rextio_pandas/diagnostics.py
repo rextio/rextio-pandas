@@ -19,7 +19,10 @@ DIAGNOSTIC_APPLY_SCHEMA = "RXTP-PANDAS-012"
 DIAGNOSTIC_APPLY_BODY = "RXTP-PANDAS-013"
 
 RUNTIME_ERRORS = {
-    "version": ("rextio-pandas requires pandas==2.3.3 and numpy==2.3.5 for this private incubator"),
+    "version": (
+        "rextio-pandas requires CPython 3.11, pandas==2.3.3, and numpy==2.3.5 "
+        "for this private incubator"
+    ),
     "series_class": "rextio-pandas Series contract requires an exact pandas.Series",
     "series_empty": "rextio-pandas Series contract does not accept an empty Series",
     "series_index": (

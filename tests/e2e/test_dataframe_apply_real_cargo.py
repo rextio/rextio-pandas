@@ -434,6 +434,57 @@ else:
     assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["frame_method"]]
 
 
+@pytest.mark.parametrize(
+    "setup",
+    [
+        # Same apply code object, but a changed default (raw=True).
+        (
+            "import types\n"
+            "_orig = pd.DataFrame.__dict__['apply']\n"
+            "_defaults = tuple(True if d is False else d for d in _orig.__defaults__)\n"
+            "_patched = types.FunctionType(_orig.__code__, _orig.__globals__, "
+            "_orig.__name__, _defaults, _orig.__closure__)\n"
+            "_patched.__qualname__ = _orig.__qualname__\n"
+            "_patched.__module__ = _orig.__module__\n"
+            "pd.DataFrame.apply = _patched"
+        ),
+        # apply with the original code object but foreign globals dict.
+        (
+            "import types\n"
+            "_orig = pd.DataFrame.__dict__['apply']\n"
+            "_patched = types.FunctionType(_orig.__code__, dict(_orig.__globals__), "
+            "_orig.__name__, _orig.__defaults__, _orig.__closure__)\n"
+            "_patched.__qualname__ = _orig.__qualname__\n"
+            "_patched.__module__ = _orig.__module__\n"
+            "pd.DataFrame.apply = _patched"
+        ),
+        # DataFrame.to_numpy ordinary replacement.
+        "pd.DataFrame.to_numpy = lambda self, *a, **k: self.values",
+        # Instance to_numpy shadowing.
+        "frame.__dict__['to_numpy'] = lambda *a, **k: None",
+    ],
+)
+def test_frame_semantic_identity_tampering_is_rejected(
+    project: CertifiedProject, setup: str
+) -> None:
+    body = f"""
+import pandas as pd
+from pandas_app.frames import apply_two
+frame = pd.DataFrame({{"left": [1.0, 2.0], "right": [3.0, 4.0]}}, dtype="float64")
+{setup}
+try:
+    apply_two(frame)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("semantic tampering was accepted")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["frame_method"]]
+
+
 def test_arrow_backed_frame_rejected_when_pyarrow_available(project: CertifiedProject) -> None:
     if importlib.util.find_spec("pyarrow") is None:
         pytest.skip("pyarrow is not installed; Arrow-backed storage cannot be constructed")

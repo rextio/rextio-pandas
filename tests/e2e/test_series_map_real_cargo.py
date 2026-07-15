@@ -441,6 +441,102 @@ else:
     assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
 
 
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        # The reproduced custom-__repr__ collision: a non-None default whose
+        # repr is "None". Structural (not repr-based) default checking rejects it.
+        (
+            "class FakeNone:\n"
+            "    def __repr__(self):\n"
+            "        return 'None'\n"
+            "_orig = pd.Series.__dict__['map']\n"
+            "_patched = types.FunctionType(_orig.__code__, _orig.__globals__, "
+            "_orig.__name__, (FakeNone(),), _orig.__closure__)\n"
+            "_patched.__qualname__ = _orig.__qualname__\n"
+            "_patched.__module__ = _orig.__module__\n"
+            "pd.Series.map = _patched"
+        ),
+        # bool/int interchange: to_numpy default False replaced by int 0.
+        (
+            "_orig = pd.Series.to_numpy\n"
+            "_patched = types.FunctionType(_orig.__code__, _orig.__globals__, "
+            "_orig.__name__, (None, 0, _orig.__defaults__[2]), _orig.__closure__)\n"
+            "_patched.__qualname__ = _orig.__qualname__\n"
+            "_patched.__module__ = _orig.__module__\n"
+            "pd.Series.to_numpy = _patched"
+        ),
+        # forged pandas sentinel: to_numpy default no_default replaced by a fake.
+        (
+            "class FakeSentinel:\n"
+            "    def __repr__(self):\n"
+            "        return '<no_default>'\n"
+            "_orig = pd.Series.to_numpy\n"
+            "_patched = types.FunctionType(_orig.__code__, _orig.__globals__, "
+            "_orig.__name__, (None, False, FakeSentinel()), _orig.__closure__)\n"
+            "_patched.__qualname__ = _orig.__qualname__\n"
+            "_patched.__module__ = _orig.__module__\n"
+            "pd.Series.to_numpy = _patched"
+        ),
+    ],
+)
+def test_default_object_forgeries_are_rejected(project: CertifiedProject, tamper: str) -> None:
+    body = f"""
+import types
+import pandas as pd
+from pandas_app.kernels import map_f64
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+{tamper}
+try:
+    map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("default forgery was accepted")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        # In-place mutation of the numpy module binding used by to_numpy.
+        ("np", "'not the numpy module'"),
+        # Mutation of a referenced pandas callable binding.
+        ("isna", "lambda *a, **k: None"),
+        # Mutation of a referenced pandas class binding.
+        ("ExtensionDtype", "object"),
+    ],
+)
+def test_mutated_trusted_globals_are_rejected(
+    project: CertifiedProject, binding: tuple[str, str]
+) -> None:
+    name, replacement = binding
+    body = f"""
+import pandas as pd
+import pandas.core.base as base
+from pandas_app.kernels import map_f64
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+_saved = base.{name}
+base.{name} = {replacement}
+try:
+    map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("mutated trusted global was accepted")
+finally:
+    base.{name} = _saved
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
 def test_runtime_guards_stay_active_under_python_dash_o(project: CertifiedProject) -> None:
     # The guards are generated Rust, so ``python -O`` (which strips Python
     # ``assert`` statements) cannot disable them.

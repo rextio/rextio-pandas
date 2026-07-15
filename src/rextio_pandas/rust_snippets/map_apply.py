@@ -19,91 +19,449 @@ PINNED_PANDAS_VERSION = "2.3.3"
 PINNED_NUMPY_VERSION = "2.3.5"
 PINNED_PYTHON = (3, 11)
 
-# Immutable known-good semantic fingerprints of the four trusted pandas methods,
-# captured once from the pinned authority (CPython 3.11 / pandas 2.3.3 /
-# numpy 2.3.5) by ``compute_authority_fingerprint`` below. These are frozen
-# constants embedded into the generated Rust; they are NOT regenerated from
-# whatever descriptor happens to exist at lowering time, so a pandas patched
-# before lowering can never become the trusted value. The fingerprint covers the
-# full executable code-object semantics (bytecode, constants, names, varnames,
-# flags, arg counts, stack size, exception table), the function ``__defaults__``
-# and ``__kwdefaults__``, and the module/qualname; the runtime guard additionally
-# proves an empty closure and that ``__globals__`` is the pinned defining module's
-# own dictionary. A test asserts these constants still equal the live pinned
-# pandas so drift is caught loudly rather than silently trusted.
-_AUTHORITY_FINGERPRINTS = {
-    "series_map": "1b4d2b08156d20c13e03b240dd2b839e4f709ecefaae1aa68477a040ab3a3231",
-    "series_to_numpy": "eb587a2abea2f9fd8ebec3a7d8802b4cacb397f6a98348cedef1c90bd728eb0d",
-    "frame_apply": "c8503b0ab63075db08f7c6a8a810f3ba360fbe268743bde3bde6f29e44f7fff5",
-    "frame_to_numpy": "78b63dedde7c364344a7da200954ede760cfbb2d0115b423ee1835db53b1fee3",
+# The Rust-side SHA-256 of the canonical code encoding uses the ``sha2`` crate
+# already pinned (``sha2 = "0.10"``) in the core-generated Cargo manifest, so it
+# is not re-declared as a plugin crate dependency (core reserves core crates).
+
+# Frozen known-good SHA-256 of the *canonical, type-tagged* encoding of each
+# trusted pandas method's code object (CPython 3.11 / pandas 2.3.3 / numpy
+# 2.3.5). Unlike the previous approach these are NOT computed through Python
+# ``repr`` (which a replacement default with a custom ``__repr__`` could forge);
+# the generated Rust rebuilds the identical byte sequence from exact PyO3 type
+# checks and hashes it with the pinned ``sha2`` crate. The digest covers only the
+# executable code semantics (bytecode, constants, names/varnames/freevars/
+# cellvars, arg counts, flags, stack size, exception table). Function defaults,
+# kwdefaults, closure, module/qualname/type, and the execution-relevant global
+# bindings are validated separately and structurally. These constants are frozen
+# and never regenerated from a live descriptor at lowering; a test asserts they
+# still match the pinned pandas.
+_AUTHORITY_CODE_DIGESTS = {
+    "series_map": "4f755e3868aee6be8e0d29b39354354d8829da3c0a00c4c1bc48dab3e83f9c4d",
+    "series_to_numpy": "1d2a907fafe5072adc69dde5099e4a83b48102e68e9d35e0aafbec8d16e70050",
+    "frame_apply": "82441419a1a610c5b2e81af0c6978974682fb3116e8f10de5b9313641fec00d1",
+    "frame_to_numpy": "ff8ef88dbed7a3c530f339452059b2aae33e65e73c3f58ae60f01c4469bb5e71",
 }
-_AUTHORITY_MODULES = {
-    "series_map": "pandas.core.series",
-    "series_to_numpy": "pandas.core.base",
-    "frame_apply": "pandas.core.frame",
-    "frame_to_numpy": "pandas.core.frame",
+_AUTHORITY_META = {
+    "series_map": {"module": "pandas.core.series", "qualname": "Series.map"},
+    "series_to_numpy": {"module": "pandas.core.base", "qualname": "IndexOpsMixin.to_numpy"},
+    "frame_apply": {"module": "pandas.core.frame", "qualname": "DataFrame.apply"},
+    "frame_to_numpy": {"module": "pandas.core.frame", "qualname": "DataFrame.to_numpy"},
 }
-# Fields hashed, in the exact order mirrored by the generated Rust guard.
-_FINGERPRINT_REPR_FIELDS = (
-    "__module__",
-    "__qualname__",
-    "__defaults__",
-    "__kwdefaults__",
-    "co_argcount",
-    "co_posonlyargcount",
-    "co_kwonlyargcount",
-    "co_nlocals",
-    "co_flags",
-    "co_stacksize",
-    "co_names",
-    "co_varnames",
-    "co_freevars",
-    "co_cellvars",
-    "co_name",
-    "co_qualname",
-    "co_consts",
-)
+# Structural default specs, validated item-by-item with exact type/identity
+# checks. ``no_default`` is the exact ``pandas._libs.lib.no_default`` singleton.
+_AUTHORITY_DEFAULTS = {
+    "series_map": (("none",),),
+    "series_to_numpy": (("none",), ("bool", False), ("no_default",)),
+    "frame_apply": (
+        ("int", 0),
+        ("bool", False),
+        ("none",),
+        ("empty_tuple",),
+        ("str", "compat"),
+        ("str", "python"),
+        ("none",),
+    ),
+    "frame_to_numpy": (("none",), ("bool", False), ("no_default",)),
+}
+# Execution-relevant global bindings, derived from each pinned method's
+# ``LOAD_GLOBAL``/``IMPORT_NAME`` set. Every binding must be identical to the
+# canonical authority object resolved from its independently named module (or
+# builtins). A test re-derives these from the live bytecode so drift cannot add
+# an unchecked global.
+_AUTHORITY_GLOBALS: dict[str, dict[str, tuple]] = {
+    "series_map": {"builtins": (), "modules": (), "module_attrs": (), "import_from": ()},
+    "series_to_numpy": {
+        "builtins": ("isinstance", "next", "iter", "TypeError"),
+        "modules": (("np", "numpy"), ("lib", "pandas._libs.lib")),
+        "module_attrs": (
+            ("ExtensionDtype", "pandas.core.dtypes.base", "ExtensionDtype"),
+            ("can_hold_element", "pandas.core.dtypes.cast", "can_hold_element"),
+            ("isna", "pandas.core.dtypes.missing", "isna"),
+            ("using_copy_on_write", "pandas._config", "using_copy_on_write"),
+        ),
+        "import_from": (),
+    },
+    "frame_apply": {
+        "builtins": (),
+        "modules": (),
+        "module_attrs": (),
+        "import_from": (("pandas.core.apply", "frame_apply"),),
+    },
+    "frame_to_numpy": {
+        "builtins": (),
+        "modules": (("np", "numpy"),),
+        "module_attrs": (),
+        "import_from": (),
+    },
+}
+_NO_DEFAULT_MODULE = "pandas._libs.lib"
+_NO_DEFAULT_ATTR = "no_default"
 
 
-def compute_authority_fingerprint(function: object, module_name: str) -> str:
-    """Compute the semantic fingerprint of one pinned pandas method.
+def _encode_value(value: object, out: list[bytes]) -> None:
+    """Type-tagged, length-delimited encoding of one allowed const value.
 
-    This is the Python authority mirror of the generated Rust guard: identical
-    field order and serialization. It validates the same invariants (genuine
-    function type, empty closure, and ``__globals__`` identity with the pinned
-    defining module) and returns the SHA-256 hex digest. It is used only to
-    capture ``_AUTHORITY_FINGERPRINTS`` and to assert in tests that those frozen
-    constants still match the pinned pandas; the runtime never regenerates the
-    expected value.
+    Mirrors the generated Rust encoder exactly; accepts only the builtin const
+    types present in the pinned code objects and rejects everything else.
     """
-    import sys
+    import struct
+    from typing import cast
+
+    value_type = type(value)
+    if value is None:
+        out.append(b"N")
+    elif value_type is bool:
+        out.append(b"T" if value else b"F")
+    elif value_type is int:
+        out.append(b"i" + cast(int, value).to_bytes(8, "little", signed=True))
+    elif value_type is str:
+        encoded = cast(str, value).encode("utf-8")
+        out.append(b"s" + struct.pack("<I", len(encoded)) + encoded)
+    elif value_type is tuple:
+        items = cast("tuple[object, ...]", value)
+        out.append(b"t" + struct.pack("<I", len(items)))
+        for item in items:
+            _encode_value(item, out)
+    else:
+        raise TypeError(f"disallowed const type {value_type!r}")
+
+
+def compute_authority_code_digest(function: object) -> str:
+    """Python mirror of the Rust canonical code digest (for capture + tests)."""
+    import struct
     import types
 
     if not isinstance(function, types.FunctionType):
         raise TypeError("pinned pandas descriptor is not a plain function")
-    module = sys.modules.get(module_name)
-    if module is None or function.__globals__ is not module.__dict__:
-        raise TypeError("pinned pandas descriptor has foreign globals provenance")
-    if function.__closure__ is not None:
-        raise TypeError("pinned pandas descriptor has a non-empty closure")
     code = function.__code__
-    if code.co_freevars:
-        raise TypeError("pinned pandas descriptor has free variables")
+    out: list[bytes] = []
+    for name in (
+        "co_argcount",
+        "co_posonlyargcount",
+        "co_kwonlyargcount",
+        "co_nlocals",
+        "co_flags",
+        "co_stacksize",
+    ):
+        out.append(b"i" + int(getattr(code, name)).to_bytes(8, "little", signed=True))
+    for name in ("co_code", "co_exceptiontable"):
+        raw = getattr(code, name)
+        out.append(b"b" + struct.pack("<I", len(raw)) + raw)
+    for name in ("co_names", "co_varnames", "co_freevars", "co_cellvars"):
+        tpl = getattr(code, name)
+        out.append(b"t" + struct.pack("<I", len(tpl)))
+        for item in tpl:
+            if type(item) is not str:
+                raise TypeError(f"{name} contains a non-str entry")
+            encoded = item.encode("utf-8")
+            out.append(b"s" + struct.pack("<I", len(encoded)) + encoded)
+    for name in ("co_name", "co_qualname"):
+        encoded = getattr(code, name).encode("utf-8")
+        out.append(b"s" + struct.pack("<I", len(encoded)) + encoded)
+    out.append(b"t" + struct.pack("<I", len(code.co_consts)))
+    for const in code.co_consts:
+        _encode_value(const, out)
+    return hashlib.sha256(b"".join(out)).hexdigest()
 
-    digest = hashlib.sha256()
-    for field in _FINGERPRINT_REPR_FIELDS:
-        source = (
-            function
-            if field in {"__module__", "__qualname__", "__defaults__", "__kwdefaults__"}
-            else code
+
+_DIGEST_CONST = {
+    "series_map": "__RXTPD_SERIES_MAP_DIGEST",
+    "series_to_numpy": "__RXTPD_SERIES_TO_NUMPY_DIGEST",
+    "frame_apply": "__RXTPD_FRAME_APPLY_DIGEST",
+    "frame_to_numpy": "__RXTPD_FRAME_TO_NUMPY_DIGEST",
+}
+
+# Fixed Rust helpers: type-tagged canonical encoding + pinned-crate SHA-256, all
+# from exact PyO3 type checks. No Python ``repr``/``hashlib`` is involved, so a
+# custom ``__repr__`` (or any caller-controlled serialization hook) can no longer
+# forge executable identity.
+_RUST_IDENTITY_FUNCTIONS = r"""fn __rxtpd_type_error(message: &'static str) -> pyo3::PyErr {
+    pyo3::exceptions::PyTypeError::new_err(message)
+}
+
+fn __rxtpd_encode_value(
+    value: &pyo3::Bound<'_, pyo3::PyAny>,
+    buffer: &mut Vec<u8>,
+    error: &'static str,
+) -> pyo3::PyResult<()> {
+    use pyo3::types::{PyAnyMethods, PyBool, PyInt, PyString, PyTuple, PyTupleMethods};
+    // Accept only the exact builtin constant types present in the pinned code
+    // objects; reject any custom/unknown object before it can reach the hash.
+    if value.is_none() {
+        buffer.push(b'N');
+        return Ok(());
+    }
+    if value.is_exact_instance_of::<PyBool>() {
+        let flag: bool = value.extract().map_err(|_| __rxtpd_type_error(error))?;
+        buffer.push(if flag { b'T' } else { b'F' });
+        return Ok(());
+    }
+    if value.is_exact_instance_of::<PyInt>() {
+        let number: i64 = value.extract().map_err(|_| __rxtpd_type_error(error))?;
+        buffer.push(b'i');
+        buffer.extend_from_slice(&number.to_le_bytes());
+        return Ok(());
+    }
+    if value.is_exact_instance_of::<PyString>() {
+        let text: String = value.extract().map_err(|_| __rxtpd_type_error(error))?;
+        let bytes = text.as_bytes();
+        buffer.push(b's');
+        buffer.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(bytes);
+        return Ok(());
+    }
+    if value.is_exact_instance_of::<PyTuple>() {
+        let tuple = value
+            .cast::<PyTuple>()
+            .map_err(|_| __rxtpd_type_error(error))?;
+        buffer.push(b't');
+        buffer.extend_from_slice(&(tuple.len() as u32).to_le_bytes());
+        for item in tuple.iter() {
+            __rxtpd_encode_value(&item, buffer, error)?;
+        }
+        return Ok(());
+    }
+    Err(__rxtpd_type_error(error))
+}
+
+fn __rxtpd_code_digest(
+    code: &pyo3::Bound<'_, pyo3::PyAny>,
+    error: &'static str,
+) -> pyo3::PyResult<String> {
+    use pyo3::types::{PyAnyMethods, PyString, PyTuple, PyTupleMethods};
+    let mut buffer: Vec<u8> = Vec::new();
+    for name in [
+        "co_argcount",
+        "co_posonlyargcount",
+        "co_kwonlyargcount",
+        "co_nlocals",
+        "co_flags",
+        "co_stacksize",
+    ] {
+        let value: i64 = code
+            .getattr(name)?
+            .extract()
+            .map_err(|_| __rxtpd_type_error(error))?;
+        buffer.push(b'i');
+        buffer.extend_from_slice(&value.to_le_bytes());
+    }
+    for name in ["co_code", "co_exceptiontable"] {
+        let raw: Vec<u8> = code
+            .getattr(name)?
+            .extract()
+            .map_err(|_| __rxtpd_type_error(error))?;
+        buffer.push(b'b');
+        buffer.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&raw);
+    }
+    for name in ["co_names", "co_varnames", "co_freevars", "co_cellvars"] {
+        let field = code.getattr(name)?;
+        let tuple = field
+            .cast::<PyTuple>()
+            .map_err(|_| __rxtpd_type_error(error))?;
+        buffer.push(b't');
+        buffer.extend_from_slice(&(tuple.len() as u32).to_le_bytes());
+        for item in tuple.iter() {
+            if !item.is_exact_instance_of::<PyString>() {
+                return Err(__rxtpd_type_error(error));
+            }
+            let text: String = item.extract().map_err(|_| __rxtpd_type_error(error))?;
+            let bytes = text.as_bytes();
+            buffer.push(b's');
+            buffer.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(bytes);
+        }
+    }
+    for name in ["co_name", "co_qualname"] {
+        let text: String = code
+            .getattr(name)?
+            .extract()
+            .map_err(|_| __rxtpd_type_error(error))?;
+        let bytes = text.as_bytes();
+        buffer.push(b's');
+        buffer.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(bytes);
+    }
+    let consts_field = code.getattr("co_consts")?;
+    let consts = consts_field
+        .cast::<PyTuple>()
+        .map_err(|_| __rxtpd_type_error(error))?;
+    buffer.push(b't');
+    buffer.extend_from_slice(&(consts.len() as u32).to_le_bytes());
+    for item in consts.iter() {
+        __rxtpd_encode_value(&item, &mut buffer, error)?;
+    }
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(&buffer);
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(64);
+    for byte in digest.iter() {
+        hex.push_str(&format!("{:02x}", byte));
+    }
+    Ok(hex)
+}"""
+
+
+def _default_item_rs(index: int, spec: tuple) -> str:
+    idx = str(index)
+    kind = spec[0]
+    if kind == "no_default":
+        return (
+            "    {\n"
+            "        let item = defaults.get_item(" + idx + ")?;\n"
+            "        let no_default = py.import(" + _rust_string(_NO_DEFAULT_MODULE) + ")?"
+            ".getattr(" + _rust_string(_NO_DEFAULT_ATTR) + ")?;\n"
+            "        if !item.is(&no_default) {\n"
+            "            return Err(__rxtpd_type_error(error));\n"
+            "        }\n"
+            "    }\n"
         )
-        digest.update(repr(getattr(source, field)).encode("utf-8"))
-        digest.update(b"\x00")
-    digest.update(code.co_code)
-    digest.update(b"\x00")
-    digest.update(code.co_exceptiontable)
-    digest.update(b"\x00")
-    return digest.hexdigest()
+    if kind == "none":
+        cond = "!item.is_none()"
+    elif kind == "bool":
+        cond = "!item.is_exact_instance_of::<pyo3::types::PyBool>() || item.extract::<bool>()?"
+    elif kind == "int":
+        cond = (
+            "!item.is_exact_instance_of::<pyo3::types::PyInt>() "
+            "|| item.extract::<i64>()? != " + str(int(spec[1]))
+        )
+    elif kind == "str":
+        cond = (
+            "!item.is_exact_instance_of::<pyo3::types::PyString>() "
+            "|| item.extract::<String>()? != " + _rust_string(spec[1])
+        )
+    elif kind == "empty_tuple":
+        cond = (
+            "!item.is_exact_instance_of::<PyTuple>() "
+            "|| item.cast::<PyTuple>().map_err(|_| __rxtpd_type_error(error))?.len() != 0"
+        )
+    else:  # pragma: no cover - guarded by the frozen specs
+        raise ValueError(f"unknown default spec kind: {kind!r}")
+    return (
+        "    {\n"
+        "        let item = defaults.get_item(" + idx + ")?;\n"
+        "        if " + cond + " {\n"
+        "            return Err(__rxtpd_type_error(error));\n"
+        "        }\n"
+        "    }\n"
+    )
+
+
+def _globals_rs(spec: dict) -> str:
+    blocks: list[str] = []
+    for name in spec["builtins"]:
+        rn = _rust_string(name)
+        blocks.append(
+            "    if module_dict.contains(" + rn + ")? {\n"
+            '        let builtins = py.import("builtins")?;\n'
+            "        if !module_dict.get_item(" + rn + ")?.is(&builtins.getattr(" + rn + ")?) {\n"
+            "            return Err(__rxtpd_type_error(error));\n"
+            "        }\n"
+            "    }\n"
+        )
+    for name, modname in spec["modules"]:
+        blocks.append(
+            "    {\n"
+            "        let canonical = py.import(" + _rust_string(modname) + ")?;\n"
+            "        let bound = module_dict.get_item(" + _rust_string(name) + ")"
+            ".map_err(|_| __rxtpd_type_error(error))?;\n"
+            "        if !bound.is(&canonical) {\n"
+            "            return Err(__rxtpd_type_error(error));\n"
+            "        }\n"
+            "    }\n"
+        )
+    for name, defmod, attr in spec["module_attrs"]:
+        blocks.append(
+            "    {\n"
+            "        let canonical = py.import(" + _rust_string(defmod) + ")?"
+            ".getattr(" + _rust_string(attr) + ")?;\n"
+            "        let bound = module_dict.get_item(" + _rust_string(name) + ")"
+            ".map_err(|_| __rxtpd_type_error(error))?;\n"
+            "        if !bound.is(&canonical) {\n"
+            "            return Err(__rxtpd_type_error(error));\n"
+            "        }\n"
+            "    }\n"
+        )
+    for impmod, attr in spec["import_from"]:
+        rm = _rust_string(impmod)
+        ra = _rust_string(attr)
+        blocks.append(
+            "    {\n"
+            "        let imported = py.import(" + rm + ")?;\n"
+            "        let target = imported.getattr("
+            + ra
+            + ").map_err(|_| __rxtpd_type_error(error))?;\n"
+            '        if !target.is_exact_instance(&types_module.getattr("FunctionType")?) {\n'
+            "            return Err(__rxtpd_type_error(error));\n"
+            "        }\n"
+            '        if target.getattr("__module__")?.extract::<String>()? != ' + rm + " {\n"
+            "            return Err(__rxtpd_type_error(error));\n"
+            "        }\n"
+            '        if target.getattr("__qualname__")?.extract::<String>()? != ' + ra + " {\n"
+            "            return Err(__rxtpd_type_error(error));\n"
+            "        }\n"
+            '        if !target.getattr("__globals__")?.is(&imported.getattr("__dict__")?) {\n'
+            "            return Err(__rxtpd_type_error(error));\n"
+            "        }\n"
+            "    }\n"
+        )
+    return "".join(blocks)
+
+
+def _validator_rs(key: str, error: dict[str, str]) -> str:
+    meta = _AUTHORITY_META[key]
+    err = error["series_method"] if key.startswith("series") else error["frame_method"]
+    digest_const = _DIGEST_CONST[key]
+    module = _rust_string(meta["module"])
+    qualname = _rust_string(meta["qualname"])
+    defaults = _AUTHORITY_DEFAULTS[key]
+    parts = [
+        "fn __rxtpd_validate_" + key + "(\n",
+        "    py: pyo3::Python<'_>,\n",
+        "    descriptor: &pyo3::Bound<'_, pyo3::PyAny>,\n",
+        ") -> pyo3::PyResult<()> {\n",
+        "    use pyo3::types::{PyAnyMethods, PyTuple, PyTupleMethods};\n",
+        "    let error = " + err + ";\n",
+        '    let types_module = py.import("types")?;\n',
+        '    if !descriptor.is_exact_instance(&types_module.getattr("FunctionType")?) {\n',
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        "    let module = py.import(" + module + ")?;\n",
+        '    if descriptor.getattr("__module__")?.extract::<String>()? != ' + module + " {\n",
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        '    if descriptor.getattr("__qualname__")?.extract::<String>()? != ' + qualname + " {\n",
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        '    let module_dict = module.getattr("__dict__")?;\n',
+        '    if !descriptor.getattr("__globals__")?.is(&module_dict) {\n',
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        '    if !descriptor.getattr("__closure__")?.is_none() {\n',
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        '    let code = descriptor.getattr("__code__")?;\n',
+        '    if code.getattr("co_freevars")?.len()? != 0 {\n',
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        "    if __rxtpd_code_digest(&code, error)? != " + digest_const + " {\n",
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        '    if !descriptor.getattr("__kwdefaults__")?.is_none() {\n',
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        '    let defaults = descriptor.getattr("__defaults__")?;\n',
+        "    if !defaults.is_exact_instance_of::<PyTuple>() {\n",
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+        "    let defaults = defaults.cast::<PyTuple>().map_err(|_| __rxtpd_type_error(error))?;\n",
+        "    if defaults.len() != " + str(len(defaults)) + " {\n",
+        "        return Err(__rxtpd_type_error(error));\n    }\n",
+    ]
+    for index, spec in enumerate(defaults):
+        parts.append(_default_item_rs(index, spec))
+    parts.append(_globals_rs(_AUTHORITY_GLOBALS[key]))
+    parts.append("    Ok(())\n}\n")
+    return "".join(parts)
+
+
+def _rust_method_validators(error: dict[str, str]) -> str:
+    return "\n".join(
+        _validator_rs(key, error)
+        for key in ("series_map", "series_to_numpy", "frame_apply", "frame_to_numpy")
+    )
 
 
 _RUST_SIMPLE_ESCAPES = {
@@ -143,14 +501,12 @@ def _rust_string(value: str) -> str:
 def boundary_helpers() -> str:
     """Return shared one-shot validation/extraction/materialization helpers."""
     error = {name: _rust_string(message) for name, message in RUNTIME_ERRORS.items()}
-    series_map_fp = _rust_string(_AUTHORITY_FINGERPRINTS["series_map"])
-    series_to_numpy_fp = _rust_string(_AUTHORITY_FINGERPRINTS["series_to_numpy"])
-    frame_apply_fp = _rust_string(_AUTHORITY_FINGERPRINTS["frame_apply"])
-    frame_to_numpy_fp = _rust_string(_AUTHORITY_FINGERPRINTS["frame_to_numpy"])
-    series_map_module = _rust_string(_AUTHORITY_MODULES["series_map"])
-    series_to_numpy_module = _rust_string(_AUTHORITY_MODULES["series_to_numpy"])
-    frame_apply_module = _rust_string(_AUTHORITY_MODULES["frame_apply"])
-    frame_to_numpy_module = _rust_string(_AUTHORITY_MODULES["frame_to_numpy"])
+    series_map_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["series_map"])
+    series_to_numpy_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["series_to_numpy"])
+    frame_apply_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["frame_apply"])
+    frame_to_numpy_digest = _rust_string(_AUTHORITY_CODE_DIGESTS["frame_to_numpy"])
+    identity_functions = _RUST_IDENTITY_FUNCTIONS
+    method_validators = _rust_method_validators(error)
     version = _rust_string(PINNED_PANDAS_VERSION)
     numpy_version = _rust_string(PINNED_NUMPY_VERSION)
     py_major, py_minor = PINNED_PYTHON
@@ -169,89 +525,17 @@ struct RxtPandasFrameF64 {{
     columns: Vec<String>,
 }}
 
-// Frozen known-good semantic fingerprints of the four trusted pandas methods,
-// captured once from CPython 3.11 / pandas 2.3.3 / numpy 2.3.5. These are
-// immutable constants, never regenerated from the live descriptor.
-const __RXTPD_SERIES_MAP_FP: &str = {series_map_fp};
-const __RXTPD_SERIES_TO_NUMPY_FP: &str = {series_to_numpy_fp};
-const __RXTPD_FRAME_APPLY_FP: &str = {frame_apply_fp};
-const __RXTPD_FRAME_TO_NUMPY_FP: &str = {frame_to_numpy_fp};
+// Frozen known-good SHA-256 of each trusted method's canonical, type-tagged
+// code encoding (CPython 3.11 / pandas 2.3.3 / numpy 2.3.5). Immutable
+// constants, never regenerated from a live descriptor.
+const __RXTPD_SERIES_MAP_DIGEST: &str = {series_map_digest};
+const __RXTPD_SERIES_TO_NUMPY_DIGEST: &str = {series_to_numpy_digest};
+const __RXTPD_FRAME_APPLY_DIGEST: &str = {frame_apply_digest};
+const __RXTPD_FRAME_TO_NUMPY_DIGEST: &str = {frame_to_numpy_digest};
 
-fn __rxtpd_type_error(message: &'static str) -> pyo3::PyErr {{
-    pyo3::exceptions::PyTypeError::new_err(message)
-}}
+{identity_functions}
 
-fn __rxtpd_method_fingerprint(
-    py: pyo3::Python<'_>,
-    descriptor: &pyo3::Bound<'_, pyo3::PyAny>,
-    module_name: &str,
-    error: &'static str,
-) -> pyo3::PyResult<String> {{
-    use pyo3::types::{{PyAnyMethods, PyBytes}};
-    // A genuine pinned descriptor is a plain Python function. Because ``co_code``
-    // alone omits defaults/kwdefaults/constants/names/flags/exception-table and
-    // globals provenance, this hashes the full executable code-object semantics
-    // AND the function ``__defaults__``/``__kwdefaults__``/module/qualname, after
-    // proving the type, an empty closure/freevars, and that ``__globals__`` is the
-    // pinned defining module's own dictionary (not a caller-supplied copy). The
-    // resulting digest is compared to a frozen authority constant, so changed
-    // defaults, changed globals, forged constants, replacement, deletion, or a
-    // malformed descriptor all surface the stable ``TypeError``.
-    let types_module = py.import("types")?;
-    let function_type = types_module.getattr("FunctionType")?;
-    if !descriptor.is_instance(&function_type)? {{
-        return Err(__rxtpd_type_error(error));
-    }}
-    let modules = py.import("sys")?.getattr("modules")?;
-    let module = modules
-        .get_item(module_name)
-        .map_err(|_| __rxtpd_type_error(error))?;
-    let module_dict = module.getattr("__dict__")?;
-    if !descriptor.getattr("__globals__")?.is(&module_dict) {{
-        return Err(__rxtpd_type_error(error));
-    }}
-    if !descriptor.getattr("__closure__")?.is_none() {{
-        return Err(__rxtpd_type_error(error));
-    }}
-    let code = descriptor.getattr("__code__")?;
-    if code.getattr("co_freevars")?.len()? != 0 {{
-        return Err(__rxtpd_type_error(error));
-    }}
-    let hasher = py.import("hashlib")?.call_method0("sha256")?;
-    let separator = PyBytes::new(py, b"\\x00");
-    let repr_fields = [
-        descriptor.getattr("__module__")?,
-        descriptor.getattr("__qualname__")?,
-        descriptor.getattr("__defaults__")?,
-        descriptor.getattr("__kwdefaults__")?,
-        code.getattr("co_argcount")?,
-        code.getattr("co_posonlyargcount")?,
-        code.getattr("co_kwonlyargcount")?,
-        code.getattr("co_nlocals")?,
-        code.getattr("co_flags")?,
-        code.getattr("co_stacksize")?,
-        code.getattr("co_names")?,
-        code.getattr("co_varnames")?,
-        code.getattr("co_freevars")?,
-        code.getattr("co_cellvars")?,
-        code.getattr("co_name")?,
-        code.getattr("co_qualname")?,
-        code.getattr("co_consts")?,
-    ];
-    for field in repr_fields {{
-        let encoded = field.repr()?.call_method1("encode", ("utf-8",))?;
-        hasher.call_method1("update", (encoded,))?;
-        hasher.call_method1("update", (&separator,))?;
-    }}
-    let co_code = code.getattr("co_code")?;
-    hasher.call_method1("update", (co_code,))?;
-    hasher.call_method1("update", (&separator,))?;
-    let co_exceptiontable = code.getattr("co_exceptiontable")?;
-    hasher.call_method1("update", (co_exceptiontable,))?;
-    hasher.call_method1("update", (&separator,))?;
-    let hexdigest: String = hasher.call_method0("hexdigest")?.extract()?;
-    Ok(hexdigest)
-}}
+{method_validators}
 
 fn __rxtpd_is_exact_numpy_dtype(
     py: pyo3::Python<'_>,
@@ -303,20 +587,8 @@ fn __rxtpd_pinned_series_class<'py>(
     if !map_descriptor.is(&map_attribute) {{
         return Err(__rxtpd_type_error({error["series_method"]}));
     }}
-    if __rxtpd_method_fingerprint(py, &map_descriptor, {series_map_module}, {error["series_method"]})?
-        != __RXTPD_SERIES_MAP_FP
-    {{
-        return Err(__rxtpd_type_error({error["series_method"]}));
-    }}
-    if __rxtpd_method_fingerprint(
-        py,
-        &to_numpy_attribute,
-        {series_to_numpy_module},
-        {error["series_method"]},
-    )? != __RXTPD_SERIES_TO_NUMPY_FP
-    {{
-        return Err(__rxtpd_type_error({error["series_method"]}));
-    }}
+    __rxtpd_validate_series_map(py, &map_descriptor)?;
+    __rxtpd_validate_series_to_numpy(py, &to_numpy_attribute)?;
     Ok(series_class)
 }}
 
@@ -354,20 +626,8 @@ fn __rxtpd_pinned_frame_class<'py>(
     if !apply_descriptor.is(&apply_attribute) || !to_numpy_descriptor.is(&to_numpy_attribute) {{
         return Err(__rxtpd_type_error({error["frame_method"]}));
     }}
-    if __rxtpd_method_fingerprint(py, &apply_descriptor, {frame_apply_module}, {error["frame_method"]})?
-        != __RXTPD_FRAME_APPLY_FP
-    {{
-        return Err(__rxtpd_type_error({error["frame_method"]}));
-    }}
-    if __rxtpd_method_fingerprint(
-        py,
-        &to_numpy_descriptor,
-        {frame_to_numpy_module},
-        {error["frame_method"]},
-    )? != __RXTPD_FRAME_TO_NUMPY_FP
-    {{
-        return Err(__rxtpd_type_error({error["frame_method"]}));
-    }}
+    __rxtpd_validate_frame_apply(py, &apply_descriptor)?;
+    __rxtpd_validate_frame_to_numpy(py, &to_numpy_descriptor)?;
     Ok(frame_class)
 }}
 

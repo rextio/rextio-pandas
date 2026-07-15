@@ -92,7 +92,12 @@ class RextioPandasPlugin:
         return lower(claimed, ctx)
 
     def crate_dependencies(self) -> tuple[CrateDependency, ...]:
-        """Return the exact rust-numpy crate pin used for owned conversion."""
+        """Return the exact rust-numpy crate pin used for owned conversion.
+
+        The SHA-256 used by the method-identity guard comes from the core-managed
+        ``sha2`` crate already present in the generated manifest, so it is not
+        re-declared here (core reserves core crate names).
+        """
         _require_api_13()
         from rextio.plugins.api import CrateDependency
 

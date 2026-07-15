@@ -28,10 +28,12 @@ from rextio_pandas.claim.map_apply import DATAFRAME_APPLY_RULE
 from rextio_pandas.diagnostics import FRAME_F64, SERIES_F64
 from rextio_pandas.plugin import RextioPandasPlugin
 from rextio_pandas.rust_snippets.map_apply import (
-    _AUTHORITY_FINGERPRINTS,
+    _AUTHORITY_CODE_DIGESTS,
+    _AUTHORITY_DEFAULTS,
+    _AUTHORITY_GLOBALS,
     _rust_string,
     boundary_helpers,
-    compute_authority_fingerprint,
+    compute_authority_code_digest,
     dataframe_apply_helpers,
 )
 
@@ -320,83 +322,105 @@ def test_unicode_schema_field_lowers_to_braced_rust_unicode_escape() -> None:
     assert re.search(r"\\u(?!\{)", source) is None
 
 
-def test_boundary_uses_immutable_semantic_fingerprint() -> None:
+def test_boundary_uses_type_tagged_digest_not_repr() -> None:
     source = boundary_helpers()
-    # The frozen authority fingerprints are embedded as string constants and
-    # compared against a freshly computed live digest at runtime.
+    # The frozen authority code digests are embedded and compared to a digest the
+    # generated Rust rebuilds from exact PyO3 type checks (no Python repr/hashlib).
     for constant, key in (
-        ("__RXTPD_SERIES_MAP_FP", "series_map"),
-        ("__RXTPD_SERIES_TO_NUMPY_FP", "series_to_numpy"),
-        ("__RXTPD_FRAME_APPLY_FP", "frame_apply"),
-        ("__RXTPD_FRAME_TO_NUMPY_FP", "frame_to_numpy"),
+        ("__RXTPD_SERIES_MAP_DIGEST", "series_map"),
+        ("__RXTPD_SERIES_TO_NUMPY_DIGEST", "series_to_numpy"),
+        ("__RXTPD_FRAME_APPLY_DIGEST", "frame_apply"),
+        ("__RXTPD_FRAME_TO_NUMPY_DIGEST", "frame_to_numpy"),
     ):
-        assert f'const {constant}: &str = "{_AUTHORITY_FINGERPRINTS[key]}"' in source
+        assert f'const {constant}: &str = "{_AUTHORITY_CODE_DIGESTS[key]}"' in source
         assert f"!= {constant}" in source
-    assert "fn __rxtpd_method_fingerprint(" in source
-    # Full semantic coverage, not just bytecode: defaults, kwdefaults, globals
-    # provenance, closure, constants/names, exception table.
-    assert 'descriptor.getattr("__defaults__")?' in source
-    assert 'descriptor.getattr("__kwdefaults__")?' in source
-    assert 'descriptor.getattr("__globals__")?.is(&module_dict)' in source
-    assert 'descriptor.getattr("__closure__")?.is_none()' in source
-    assert 'code.getattr("co_consts")?' in source
-    assert 'code.getattr("co_exceptiontable")?' in source
-    # Fingerprint is captured from a known-good authority, never regenerated from
-    # a possibly-patched live descriptor at lowering time.
-    assert "co_code.as_slice() != trusted_co_code" not in source
-    # A hardcoded Python-minor gate documents the fail-closed version pin.
-    assert "co_flags" in source
-    for module_name in (
-        "pandas.core.series",
-        "pandas.core.base",
-        "pandas.core.frame",
-    ):
-        assert f'"{module_name}"' in source
+    # No user-controlled serialization reaches the authority check.
+    assert ".repr()" not in source
+    assert 'py.import("hashlib")' not in source
+    assert "fn __rxtpd_method_fingerprint(" not in source
+    # Type-tagged canonical encoder with exact type checks, hashed by the crate.
+    assert "fn __rxtpd_encode_value(" in source
+    assert "fn __rxtpd_code_digest(" in source
+    assert "sha2::Sha256::new()" in source
+    assert "is_exact_instance_of::<PyBool>()" in source
+    assert "is_exact_instance_of::<PyInt>()" in source
+    # Defaults validated structurally (never through the digest).
+    assert "fn __rxtpd_validate_series_to_numpy(" in source
+    assert "no_default" in source
+    assert 'py.import("pandas._libs.lib")' in source
 
 
-def test_authority_fingerprints_match_pinned_pandas() -> None:
+def test_authority_code_digests_match_pinned_pandas() -> None:
     # The frozen constants must equal the live pinned pandas so drift is caught
     # loudly, not silently trusted.
     import pandas as pd
 
     live = {
-        "series_map": (pd.Series.__dict__["map"], "pandas.core.series"),
-        "series_to_numpy": (pd.Series.to_numpy, "pandas.core.base"),
-        "frame_apply": (pd.DataFrame.__dict__["apply"], "pandas.core.frame"),
-        "frame_to_numpy": (pd.DataFrame.__dict__["to_numpy"], "pandas.core.frame"),
+        "series_map": pd.Series.__dict__["map"],
+        "series_to_numpy": pd.Series.to_numpy,
+        "frame_apply": pd.DataFrame.__dict__["apply"],
+        "frame_to_numpy": pd.DataFrame.__dict__["to_numpy"],
     }
-    for key, (function, module_name) in live.items():
-        assert compute_authority_fingerprint(function, module_name) == _AUTHORITY_FINGERPRINTS[key]
+    for key, function in live.items():
+        assert compute_authority_code_digest(function) == _AUTHORITY_CODE_DIGESTS[key]
 
 
-def test_changed_defaults_or_globals_change_the_fingerprint() -> None:
+def test_custom_repr_default_does_not_forge_the_code_digest() -> None:
+    # The reproduced attack: a replacement map with the original code object and a
+    # non-None default whose custom __repr__ returns "None". The digest covers
+    # only the code object, so it is unchanged; the forgery is caught by the
+    # separate structural default check, not the digest.
     import types
 
     import pandas as pd
 
-    original = pd.Series.__dict__["map"]
-    base = compute_authority_fingerprint(original, "pandas.core.series")
+    class FakeNone:
+        def __repr__(self) -> str:
+            return "None"
 
-    changed_defaults = types.FunctionType(
+    original = pd.Series.__dict__["map"]
+    forged = types.FunctionType(
         original.__code__,
         original.__globals__,
         original.__name__,
-        ("ignore",),  # na_action default flipped from None
+        (FakeNone(),),
         original.__closure__,
     )
-    changed_defaults.__qualname__ = original.__qualname__
-    changed_defaults.__module__ = original.__module__
-    assert compute_authority_fingerprint(changed_defaults, "pandas.core.series") != base
+    # Same code object -> identical code digest (repr plays no part).
+    assert compute_authority_code_digest(forged) == _AUTHORITY_CODE_DIGESTS["series_map"]
+    # But the runtime default spec requires the actual None singleton.
+    assert _AUTHORITY_DEFAULTS["series_map"] == (("none",),)
+    assert forged.__defaults__[0] is not None
 
-    foreign_globals = types.FunctionType(
-        original.__code__,
-        dict(original.__globals__),  # a caller-supplied copy, not the module dict
-        original.__name__,
-        original.__defaults__,
-        original.__closure__,
-    )
-    with pytest.raises(TypeError):
-        compute_authority_fingerprint(foreign_globals, "pandas.core.series")
+
+def test_global_binding_specs_match_live_bytecode() -> None:
+    # A drift that added an unchecked LOAD_GLOBAL must fail this test rather than
+    # silently escape the runtime binding checks.
+    import dis
+
+    import pandas as pd
+
+    live = {
+        "series_map": pd.Series.__dict__["map"],
+        "series_to_numpy": pd.Series.to_numpy,
+        "frame_apply": pd.DataFrame.__dict__["apply"],
+        "frame_to_numpy": pd.DataFrame.__dict__["to_numpy"],
+    }
+    for key, function in live.items():
+        load_globals = {
+            ins.argval for ins in dis.get_instructions(function) if ins.opname == "LOAD_GLOBAL"
+        }
+        spec = _AUTHORITY_GLOBALS[key]
+        covered = (
+            set(spec["builtins"])
+            | {name for name, _ in spec["modules"]}
+            | {name for name, _, _ in spec["module_attrs"]}
+        )
+        assert load_globals == covered, (key, load_globals, covered)
+        imports = [
+            ins.argval for ins in dis.get_instructions(function) if ins.opname == "IMPORT_NAME"
+        ]
+        assert imports == [mod for mod, _ in spec["import_from"]], key
 
 
 def test_boundary_rejects_extension_dtypes_before_conversion() -> None:

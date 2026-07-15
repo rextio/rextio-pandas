@@ -485,6 +485,54 @@ else:
     assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["frame_method"]]
 
 
+@pytest.mark.parametrize(
+    "body_lines",
+    [
+        # DataFrame.to_numpy uses the pinned pandas.core.frame.np binding.
+        (
+            "import pandas.core.frame as frame_mod\n"
+            "_saved = frame_mod.np\n"
+            "frame_mod.np = 'not numpy'\n"
+            "try:\n"
+            "    _run()\n"
+            "finally:\n"
+            "    frame_mod.np = _saved"
+        ),
+        # DataFrame.apply imports pandas.core.apply.frame_apply at call time;
+        # tampering that import target must be rejected.
+        (
+            "import pandas.core.apply as apply_mod\n"
+            "_saved = apply_mod.frame_apply\n"
+            "apply_mod.frame_apply = lambda *a, **k: None\n"
+            "try:\n"
+            "    _run()\n"
+            "finally:\n"
+            "    apply_mod.frame_apply = _saved"
+        ),
+    ],
+)
+def test_frame_mutated_globals_and_imports_are_rejected(
+    project: CertifiedProject, body_lines: str
+) -> None:
+    body = f"""
+import pandas as pd
+from pandas_app.frames import apply_two
+frame = pd.DataFrame({{"left": [1.0, 2.0], "right": [3.0, 4.0]}}, dtype="float64")
+def _run():
+    try:
+        apply_two(frame)
+    except Exception as exc:
+        print(type(exc).__name__)
+        print(str(exc))
+    else:
+        raise SystemExit("mutated global/import was accepted")
+{body_lines}
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["frame_method"]]
+
+
 def test_arrow_backed_frame_rejected_when_pyarrow_available(project: CertifiedProject) -> None:
     if importlib.util.find_spec("pyarrow") is None:
         pytest.skip("pyarrow is not installed; Arrow-backed storage cannot be constructed")

@@ -100,3 +100,38 @@
 - Report a *sustained* measured Series break-even (favorable at the size and
   every larger measured size, all eligible; never interpolated) and record the
   installed Numba version.
+
+### Second adversarial post-review follow-up
+
+- Remove every user-controlled `repr` from the method authority check. The
+  code-identity digest is now a type-tagged, length-delimited canonical encoding
+  built in Rust from exact PyO3 type checks (only the builtin const types the
+  pinned code objects actually contain, with recursive exact tuples) and hashed
+  with the core-managed `sha2` crate — no Python `repr`/`hashlib`. Function
+  defaults are validated structurally item-by-item (exact builtin type and value,
+  `None`/`False` singletons with no bool/int interchange, exact strings/tuples,
+  and the exact `pandas._libs.lib.no_default` object), separately from the digest.
+  Fixes the custom-`__repr__` default collision; adds real-Cargo regressions for
+  the custom-`__repr__` `None`, an `int` masquerading as `False`, and a forged
+  sentinel.
+- Validate every execution-relevant global binding of the trusted methods.
+  The `LOAD_GLOBAL`/import set is derived from the pinned bytecode and hard-coded
+  as an auditable binding spec; each binding must be identical to the canonical
+  authority object from its independently named defining module (or builtins),
+  numpy/lib must be the canonical module objects, and `DataFrame.apply`'s
+  `pandas.core.apply.frame_apply` import target is validated. A test re-derives
+  the spec from live bytecode so drift cannot add an unchecked global. Adds
+  real-Cargo regressions mutating `pandas.core.base.np`, `isna`, `ExtensionDtype`,
+  `pandas.core.frame.np`, and `pandas.core.apply.frame_apply` (restored in
+  `finally`).
+- Close the benchmark artifact binding gap: the timed `_rextio_native.__file__`
+  must resolve exactly equal to `build.json`'s `installed_path`, and the timed
+  Python wrapper must be the exact generated `kernels.py`. `native_artifact.sha256`
+  is now the standard raw-bytes SHA-256 via a dedicated helper; the harness
+  manifest digest is kept separately as `harness_manifest_sha256`.
+- Validate every raw schedule pair (not only first positions): a pair must be
+  exactly `[native, fallback]` or `[fallback, native]`; duplicate/unknown/missing/
+  extra lanes set `is_counterbalanced` false and fail eligibility closed.
+- Replace the editable plugin path `startswith` check with resolved
+  `Path.is_relative_to(checkout / "src")`, with a sibling-prefix (`src-evil`)
+  negative test.

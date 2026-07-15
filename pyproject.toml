@@ -20,7 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-  "rextio @ git+https://github.com/rextio/rextio.git@ac2b79d304f13abaaecaf7714f897574c3b6256f",
+  "rextio @ git+https://github.com/rextio/rextio-core-next.git@ac2b79d304f13abaaecaf7714f897574c3b6256f",
   "pandas==2.3.3",
   "numpy==2.3.5",
 ]

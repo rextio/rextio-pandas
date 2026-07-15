@@ -2,9 +2,13 @@
 
 `rextio-pandas` is a private, unpublished incubator for narrow pandas numeric
 lowering. It requires Rextio plugin API 1.3 from exact core commit
-`ac2b79d304f13abaaecaf7714f897574c3b6256f`; released `rextio==0.1.2`
-implements API 1.2 and cannot load this plugin. Development and evidence are
-pinned to `pandas==2.3.3` and `numpy==2.3.5`.
+`ac2b79d304f13abaaecaf7714f897574c3b6256f`, which lives only in the private
+`rextio/rextio-core-next` repository; the released `rextio==0.1.2` package
+shares that version number but implements API 1.2 and cannot load this plugin.
+The dependency is therefore a credential-free exact-commit VCS pin
+(`git+https://github.com/rextio/rextio-core-next.git@<commit>`), never a
+`rextio>=…` range that could select the published wheel. Development and
+evidence are pinned to `pandas==2.3.3` and `numpy==2.3.5`.
 
 ## Series.map surface
 
@@ -110,6 +114,14 @@ NumPy-scalar semantics remain unresolved.
 python -m pip install -e '.[dev]'
 ```
 
-The project dependency uses a credential-free exact Git commit URL. This
-package is marked `Private :: Do Not Upload` and must not be published while
-the API 1.3 core remains an incubator.
+Resolving the install requires read access to the private
+`rextio/rextio-core-next` repository at the pinned commit; the credential-free
+URL means the fetching environment supplies its own git credentials (never a
+token embedded in `pyproject.toml`). The dependency-resolution provenance can
+be reproduced with `scripts/clean_env_proof.py`, which builds the wheel, installs
+it into a throwaway environment while resolving the exact VCS commit (no
+`--no-deps`), and asserts the installed core's `direct_url.json` URL/commit,
+`PLUGIN_API_VERSION == "1.3"`, the imported `rextio`/`rextio_pandas` paths, and
+that the selected `rextio.plugins` entry point is this wheel. This package is
+marked `Private :: Do Not Upload` and must not be published while the API 1.3
+core remains an incubator.

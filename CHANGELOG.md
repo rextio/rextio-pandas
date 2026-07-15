@@ -5,8 +5,10 @@
 ### Series.map increment
 
 - Pin the experiment to Rextio core
-  `ac2b79d304f13abaaecaf7714f897574c3b6256f` (plugin API 1.3),
-  pandas 2.3.3, NumPy 2.3.5, and rust-numpy 0.29.0.
+  `ac2b79d304f13abaaecaf7714f897574c3b6256f` (plugin API 1.3) via a
+  credential-free exact-commit VCS pin on the private
+  `rextio/rextio-core-next` repository, plus pandas 2.3.3, NumPy 2.3.5, and
+  rust-numpy 0.29.0.
 - Add side-effect-free `SeriesF64`, `SeriesI64`, and future
   `DataFrameF64[Schema]` annotation spellings.
 - Add fail-closed static claim/audit logic for one positional scalar project
@@ -38,3 +40,29 @@
 - Add an honest actual-wrapper benchmark harness with >=10 ms calibration,
   counterbalanced pairs, paired bootstrap confidence intervals, raw samples,
   provenance, null-call floor, and default/raw/vectorized/Numba context lanes.
+
+### Independent-review follow-up
+
+- Point the exact-commit VCS core dependency at the private
+  `rextio/rextio-core-next` repository (where the integrated API 1.3 commit
+  actually exists) and add `scripts/clean_env_proof.py`, which resolves the
+  dependency in a throwaway environment and asserts the core's
+  `direct_url.json` commit, plugin API 1.3, imported module paths, and the
+  selected entry point.
+- Reject every pandas extension dtype/storage (nullable `Float64`/`Int64`,
+  numeric `Categorical`, `Sparse`, Arrow-backed) at the runtime boundary by
+  requiring an exact `numpy.dtype` instance before conversion, instead of
+  trusting whatever `to_numpy()` returns.
+- Replace the forgeable `__module__`/`__qualname__` method checks with an
+  immutable per-method `co_code` fingerprint captured from the pinned pandas
+  2.3.3 descriptors, so `functools.wraps` replacements, deletion, malformed
+  descriptors, and instance shadowing all fail with the stable `TypeError`.
+- Emit Unicode schema field names as valid Rust `\u{...}` string escapes via a
+  dedicated tested encoder rather than JSON `\uXXXX`.
+- Strengthen the benchmark: track the final `benchmarks/results/latest.json`,
+  gather fail-closed `python -O`-safe provenance (imported module files,
+  git commit/dirty, direct URLs, API version, entry point, check-report digest,
+  claimed routes, harness digest, toolchain/OS), force a genuinely
+  counterbalanced 5:4/4:5 seeded schedule per cell, and make
+  `headline_eligible` fail closed on correctness, route/provenance, schedule
+  balance, near-floor timing, missing samples, or unstable intervals.

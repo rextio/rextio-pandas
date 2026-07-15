@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import importlib.metadata as importlib_metadata
 import os
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
+
+import rextio
 
 from rextio.plugins.api import PLUGIN_API_VERSION, BoundaryConversion
 
@@ -22,9 +25,38 @@ def test_exact_incubator_dependencies_and_api() -> None:
 
     assert PLUGIN_API_VERSION == "1.3"
     assert RextioPandasPlugin.api_version == "1.3"
-    assert f"git+https://github.com/rextio/rextio.git@{CORE_COMMIT}" in dependencies[0]
+    assert f"git+https://github.com/rextio/rextio-core-next.git@{CORE_COMMIT}" in dependencies[0]
+    assert "rextio.git@" not in dependencies[0]
     assert "@ghp_" not in dependencies[0]
+    assert "x-access-token" not in dependencies[0]
+    assert "@" not in dependencies[0].split("://", 1)[1].split("/", 1)[0]
     assert dependencies[1:] == ["pandas==2.3.3", "numpy==2.3.5"]
+
+
+def test_installed_core_provenance_is_api_13_not_released_range() -> None:
+    # The resolved core must be the integrated API 1.3 commit, never the
+    # released 0.1.2 wheel that shares the same version string.
+    assert PLUGIN_API_VERSION == "1.3"
+    core_file = Path(rextio.__file__).resolve()
+    assert "rextio-core-next" in core_file.parts, core_file
+
+    selected = [
+        ep
+        for ep in importlib_metadata.entry_points(group="rextio.plugins")
+        if ep.name == "rextio-pandas"
+    ]
+    assert selected, "rextio-pandas entry point is not installed"
+    assert all(ep.value == "rextio_pandas.plugin:plugin" for ep in selected)
+    assert all(ep.dist is not None and ep.dist.name == "rextio-pandas" for ep in selected)
+
+
+def test_clean_env_proof_script_is_credential_free_and_no_deps_free() -> None:
+    text = (ROOT / "scripts" / "clean_env_proof.py").read_text(encoding="utf-8")
+    assert CORE_COMMIT in text
+    assert "rextio-core-next" in text
+    # The proof resolves dependencies; it must not bypass them.
+    assert '"--no-deps"' not in text
+    assert "'--no-deps'" not in text
 
 
 def test_loader_registers_materialized_series_types_and_exact_crate() -> None:

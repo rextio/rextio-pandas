@@ -18,3 +18,23 @@
 - Add pinned-version semantic characterization, analyzer/claim/lower tests,
   and real-Cargo product-route equivalence and rejection evidence.
 
+### DataFrame.apply increment
+
+- Characterize pandas 2.3.3 homogeneous/mixed row scalar types, empty-shape
+  calls, NumPy-scalar warnings/overflow, signed zero, and F-order behavior
+  before lowering.
+- Add the exact `DataFrameF64[Schema]` plus
+  `frame.apply(row_udf, axis=1)` homogeneous-float64 route.
+- Validate exact DataFrame class/dtype/index/columns/schema/default metadata
+  and method identity at the one-shot boundary with stable `TypeError`
+  failures and no runtime deopt.
+- Lower only literal subscripts, finite f64 literals, unary negation,
+  comparisons, boolean composition, and conditional expressions into a
+  deterministic GIL-detached Rust row loop; all binops/calls and mixed or
+  integer frames remain fallback/NO-GO.
+- Add real-Cargo product-route tests for one/multiple columns and schemas,
+  C/F storage, NaN/Inf/signed-zero, large inputs, fresh native/fallback
+  processes, and the full runtime rejection table.
+- Add an honest actual-wrapper benchmark harness with >=10 ms calibration,
+  counterbalanced pairs, paired bootstrap confidence intervals, raw samples,
+  provenance, null-call floor, and default/raw/vectorized/Numba context lanes.

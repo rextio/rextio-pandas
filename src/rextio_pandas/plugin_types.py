@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from rextio.plugins.api import BoundaryConversion, PluginType
 
-from rextio_pandas.diagnostics import SERIES_F64, SERIES_I64
+from rextio_pandas.diagnostics import FRAME_F64, SERIES_F64, SERIES_I64
 
 
 def _series_type(key: str, annotation: str, rust_type: str, extractor: str) -> PluginType:
@@ -34,13 +34,24 @@ PLUGIN_TYPES: tuple[PluginType, ...] = (
         "RxtPandasSeriesI64",
         "__rxtpd_extract_series_i64",
     ),
+    PluginType(
+        key=FRAME_F64,
+        annotations=("rextio_pandas.types.DataFrameF64",),
+        rust_type="RxtPandasFrameF64",
+        conversion=BoundaryConversion(
+            param_rust="pyo3::Bound<'py, pyo3::PyAny>",
+            param_expr="__rxtpd_extract_frame_f64(py, &{param})?",
+            return_rust="pyo3::Bound<'py, pyo3::PyAny>",
+            return_expr="__rxtpd_materialize_frame_f64(py, {value})?",
+        ),
+    ),
 )
 
 _BY_KEY = {plugin_type.key: plugin_type for plugin_type in PLUGIN_TYPES}
 
 
 def plugin_types() -> tuple[PluginType, ...]:
-    """Return the stable materialized Series vocabulary."""
+    """Return the stable materialized Series/DataFrame vocabulary."""
     return PLUGIN_TYPES
 
 

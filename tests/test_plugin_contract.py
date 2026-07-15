@@ -34,6 +34,7 @@ def test_loader_registers_materialized_series_types_and_exact_crate() -> None:
     assert registry.active[0].lowering_provided is True
     assert registry.active[0].packages == ("pandas",)
     assert tuple(binding.plugin_type for binding in registry.types) == PLUGIN_TYPES
+    assert len(PLUGIN_TYPES) == 3
     assert all(
         isinstance(plugin_type.conversion, BoundaryConversion) for plugin_type in PLUGIN_TYPES
     )

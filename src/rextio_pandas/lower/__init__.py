@@ -1,4 +1,4 @@
-"""Lowering router for the pandas incubator."""
+"""Lowering router for rextio-pandas."""
 
 from rextio_pandas.lower.map_apply import lower
 

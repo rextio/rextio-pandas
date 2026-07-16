@@ -731,12 +731,8 @@ def _builtin_authority_validators_rs() -> str:
         if kind[0] not in ("type", "exception"):
             continue
         type_arms.append(
-            "        "
-            + _rust_string(name)
-            + " => {\n"
-            "            if !bound.is(&py.get_type::<"
-            + kind[1]
-            + ">()) {\n"
+            "        " + _rust_string(name) + " => {\n"
+            "            if !bound.is(&py.get_type::<" + kind[1] + ">()) {\n"
             "                return Err(__rxtpd_type_error(error));\n"
             "            }\n"
             "            Ok(())\n"
@@ -752,9 +748,7 @@ def _builtin_authority_validators_rs() -> str:
         ") -> pyo3::PyResult<()> {\n"
         "    use pyo3::types::PyAnyMethods;\n"
         "    match name {\n"
-        "        "
-        + cfunction_match
-        + " => {\n"
+        "        " + cfunction_match + " => {\n"
         "            // Builtin functions cannot be forged with ordinary Python.\n"
         "            // Require exact C-level builtin-function type plus fixed\n"
         "            // module/name/qualname and the canonical builtins module as\n"
@@ -776,9 +770,7 @@ def _builtin_authority_validators_rs() -> str:
         "                return Err(__rxtpd_type_error(error));\n"
         "            }\n"
         "            Ok(())\n"
-        "        }\n"
-        + "".join(type_arms)
-        + "        _ => Err(__rxtpd_type_error(error)),\n"
+        "        }\n" + "".join(type_arms) + "        _ => Err(__rxtpd_type_error(error)),\n"
         "    }\n"
         "}\n"
     )
@@ -792,9 +784,7 @@ def _globals_rs(spec: dict) -> str:
         # name (not only those shadowed in module globals) against an independent
         # structural/C-level authority — never by comparing two lookups from the
         # live mutable builtins dictionary.
-        blocks.append(
-            '    let function_builtins = descriptor.getattr("__builtins__")?;\n'
-        )
+        blocks.append('    let function_builtins = descriptor.getattr("__builtins__")?;\n')
     for name in spec["builtins"]:
         if name not in _BUILTIN_AUTHORITIES:
             raise ValueError(f"no independent authority rule for builtin {name!r}")

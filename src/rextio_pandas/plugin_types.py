@@ -1,4 +1,4 @@
-"""Materialized Series plugin types for the API 1.3 incubator."""
+"""Materialized Series plugin types for Rextio plugin API 1.3."""
 
 from __future__ import annotations
 

@@ -15,21 +15,23 @@ python -m benchmarks.bench_product_routes --smoke
 
 A **fail-closed** preflight (no Python `assert`, so it survives `python -O`)
 runs before any build or timing and *rejects* — not merely records — an invalid
-state. It requires exact clean core and plugin Git worktrees; the core HEAD at
-`2bd1d1da0cf59e97d1659606bcb1ec12491e032c`; `PLUGIN_API_VERSION == "1.3"`;
-pandas 2.3.3 / NumPy 2.3.5; that the imported `rextio`/`rextio_pandas` resolve
-under the expected editable checkout (or, for a VCS/wheel install, that the
-parsed `direct_url.json` proves the exact credential-free URL and commit or the
-built wheel and hash); and that the selected `rextio.plugins` entry point loads
-this exact plugin object. A dirty or provenance-invalid run stops before timing
-and cannot produce an eligible result. After the build it verifies the
-`check.json` routes and the `build.json` native-build report agree (status
-`built`, accepted native count, zero rejections), hashes both reports, and
-confirms the generated Python module and native extension artifact imported for
-timing resolve under the freshly built project (not a cache or global install).
-The normalized provenance plus both report digests/paths, the native artifact
-path/digest, and the harness SHA-256 are recorded; raw `check.json`/`build.json`
-bodies are copied into `benchmarks/results/evidence/` only on a full run.
+state. It requires a clean plugin Git worktree; an installed `rextio` package
+satisfying `>=0.1.3,<0.2` with `PLUGIN_API_VERSION == "1.3"`; pandas 2.3.3 /
+NumPy 2.3.5; that the imported `rextio_pandas` resolves under this checkout (or
+a built wheel with hash); and that the selected `rextio.plugins` entry point
+loads this exact plugin object. Core provenance is taken from the **installed**
+distribution by default (index / wheel / VCS / editable). Optionally set
+`REXTIO_CORE_ROOT` to a local core checkout to also require that tree be clean
+and to record its git SHA — no machine-local absolute path is hard-coded. A
+dirty or provenance-invalid run stops before timing and cannot produce an
+eligible result. After the build it verifies the `check.json` routes and the
+`build.json` native-build report agree (status `built`, accepted native count,
+zero rejections), hashes both reports, and confirms the generated Python module
+and native extension artifact imported for timing resolve under the freshly
+built project (not a cache or global install). The normalized provenance plus
+both report digests/paths, the native artifact path/digest, and the harness
+SHA-256 are recorded; raw `check.json`/`build.json` bodies are copied into
+`benchmarks/results/evidence/` only on a full run.
 
 The timed native wrapper validates the complete reachable Series authority once
 per public call: `Series.map`, inherited `_map_values`, `algorithms.map_array`,
@@ -65,14 +67,17 @@ eligible; it is never interpolated, and is `none` otherwise.
 
 ## Authoritative full result (2026-07-16)
 
-The tracked schema-4 non-smoke run used plugin commit
-`35d651b1684c6a48a6222e19635df853840aed8e`, core commit
+The tracked schema-4 non-smoke run (historical provenance retained) used plugin
+commit `35d651b1684c6a48a6222e19635df853840aed8e`, core commit
 `2bd1d1da0cf59e97d1659606bcb1ec12491e032c`, API 1.3, nine paired repetitions,
-the 10 ms minimum calibration target, and seed `20260715`. The route report is exactly
-`native-plugin:rextio-pandas`; all six cells are headline-eligible, their
-native/fallback correctness digests match, and every recorded schedule is a
-valid 5:4 or 4:5 counterbalance. The build accepted one native route and
-rejected none.
+the 10 ms minimum calibration target, and seed `20260715`. The route report is
+exactly `native-plugin:rextio-pandas`; all six cells are headline-eligible,
+their native/fallback correctness digests match, and every recorded schedule is
+a valid 5:4 or 4:5 counterbalance. The build accepted one native route and
+rejected none. Capture-time absolute paths in `latest.json` / evidence JSON are
+historical provenance and are not rewritten for the public 0.1.0 packaging
+release. The **sustained measured break-even remains 10,000 elements** with the
+ratios below.
 
 | Size | Native median (µs/call) | pandas fallback median (µs/call) | Paired native/fallback ratio | Paired 95% CI | Interpretation |
 | ---: | ---: | ---: | ---: | ---: | --- |

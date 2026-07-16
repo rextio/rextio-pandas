@@ -15,18 +15,33 @@ from rextio.plugins.api import PLUGIN_API_VERSION, BoundaryConversion
 
 import rextio_pandas
 import rextio_pandas.rust_snippets as rust_snippets
-from rextio_pandas.plugin import CORE_COMMIT, RextioPandasPlugin
+from rextio_pandas import __version__ as package_version
+from rextio_pandas.plugin import REQUIRED_PLUGIN_API, RextioPandasPlugin
 from rextio_pandas.plugin_types import PLUGIN_TYPES
 from rextio_pandas.rust_snippets.map_apply import boundary_helpers
 
 from conftest import pandas_registry
 
 ROOT = Path(__file__).resolve().parents[1]
-CORE_VCS_URL = "https://github.com/rextio/rextio-core-next.git"
+REQUIRED_REXTIO_SPEC = ">=0.1.3,<0.2"
 
 
 def _normalize(name: str) -> str:
     return name.lower().replace("_", "-")
+
+
+def _parse_version(value: str) -> tuple[int, int, int]:
+    core = value.split("+", 1)[0].split("-", 1)[0]
+    parts = core.split(".")
+    major = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
+    minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    return major, minor, patch
+
+
+def _rextio_version_supported(value: str) -> bool:
+    version = _parse_version(value)
+    return (0, 1, 3) <= version < (0, 2, 0)
 
 
 def _direct_url(distribution: str) -> dict | None:
@@ -58,48 +73,52 @@ def _assert_credential_free(url: str) -> None:
     assert "ghp_" not in url and "x-access-token" not in url, url
 
 
-def test_exact_incubator_dependencies_and_api() -> None:
+def test_public_alpha_version_and_dependencies() -> None:
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = metadata["project"]["dependencies"]
+    project = metadata["project"]
+    dependencies = project["dependencies"]
+    classifiers = project.get("classifiers", [])
 
-    assert PLUGIN_API_VERSION == "1.3"
+    assert package_version == "0.1.0"
+    assert PLUGIN_API_VERSION == REQUIRED_PLUGIN_API == "1.3"
     assert RextioPandasPlugin.api_version == "1.3"
-    assert f"git+https://github.com/rextio/rextio-core-next.git@{CORE_COMMIT}" in dependencies[0]
-    assert "rextio.git@" not in dependencies[0]
-    assert "@ghp_" not in dependencies[0]
-    assert "x-access-token" not in dependencies[0]
-    assert "@" not in dependencies[0].split("://", 1)[1].split("/", 1)[0]
+    assert project["requires-python"] == ">=3.11,<3.12"
+    assert dependencies[0] == f"rextio{REQUIRED_REXTIO_SPEC}"
+    assert "git+" not in dependencies[0]
+    assert "rextio-core-next" not in dependencies[0]
     assert dependencies[1:] == ["pandas==2.3.3", "numpy==2.3.5"]
+    assert "Private :: Do Not Upload" not in classifiers
+    assert any(c.startswith("Development Status :: 3") for c in classifiers)
+    assert "Programming Language :: Python :: 3.11" in classifiers
+    assert "Programming Language :: Python :: 3.12" not in classifiers
+    assert "Programming Language :: Python :: 3.13" not in classifiers
+    urls = project.get("urls") or {}
+    assert urls.get("Homepage") == "https://github.com/rextio/rextio-pandas"
+    assert urls.get("Repository") == "https://github.com/rextio/rextio-pandas"
+    assert "private" not in project["description"].lower()
+    assert "incubator" not in project["description"].lower()
 
 
-def test_installed_core_provenance_is_api_13_not_released_range() -> None:
-    # The resolved core must be the integrated API 1.3 commit, never the
-    # released 0.1.2 wheel that shares the same version string. Both editable
-    # and non-editable VCS-wheel modes are proven without relying on a directory
-    # name substring.
+def test_installed_core_is_public_api_13_range() -> None:
+    # The resolved core must advertise plugin API 1.3 and a package version in
+    # the public rextio>=0.1.3,<0.2 range. Index installs may lack direct_url;
+    # editable/VCS/wheel modes are accepted when present and credential-free.
     assert PLUGIN_API_VERSION == "1.3"
+    core_version = importlib_metadata.version("rextio")
+    assert _rextio_version_supported(core_version), core_version
     core_file = Path(rextio.__file__).resolve()
     direct_url = _direct_url("rextio")
-    assert direct_url is not None, "core has no direct_url.json provenance"
-
+    if direct_url is None:
+        return
     if direct_url.get("dir_info", {}).get("editable"):
-        # Editable: prove the import resolves under the exact resolved checkout
-        # and that checkout's Git HEAD is the pinned integrated commit.
         checkout = _file_url_to_path(direct_url["url"])
         assert core_file.is_relative_to(checkout), (checkout, core_file)
-        head = subprocess.run(
-            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        assert head == CORE_COMMIT, head
     elif "vcs_info" in direct_url:
-        # Non-editable VCS wheel: prove the credential-free URL and exact commit.
-        assert direct_url["url"] == CORE_VCS_URL, direct_url["url"]
         _assert_credential_free(direct_url["url"])
         assert direct_url["vcs_info"]["vcs"] == "git"
-        assert direct_url["vcs_info"]["commit_id"] == CORE_COMMIT
+        assert direct_url["vcs_info"]["commit_id"]
+    elif "archive_info" in direct_url:
+        _assert_credential_free(direct_url["url"])
     else:
         raise AssertionError(f"unrecognized core install provenance: {direct_url}")
 
@@ -152,13 +171,49 @@ def test_selected_entry_point_loads_this_exact_plugin_object() -> None:
     assert all(ep.load() is this_plugin for ep in selected)
 
 
-def test_clean_env_proof_script_is_credential_free_and_no_deps_free() -> None:
+def _load_clean_env_proof_module():
+    import importlib.util
+
+    path = ROOT / "scripts" / "clean_env_proof.py"
+    spec = importlib.util.spec_from_file_location("clean_env_proof", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_clean_env_proof_script_is_public_range_and_no_deps_free() -> None:
     text = (ROOT / "scripts" / "clean_env_proof.py").read_text(encoding="utf-8")
-    assert CORE_COMMIT in text
-    assert "rextio-core-next" in text
+    assert REQUIRED_REXTIO_SPEC in text
+    assert "rextio-core-next" not in text
+    assert "/Volumes/" not in text
     # The proof resolves dependencies; it must not bypass them.
     assert '"--no-deps"' not in text
     assert "'--no-deps'" not in text
+    assert "_require_supported_interpreter" in text
+    assert "requires CPython 3.11" in text
+
+
+def test_clean_env_proof_interpreter_gate() -> None:
+    proof = _load_clean_env_proof_module()
+
+    assert proof._interpreter_supported((3, 11, 15), "cpython")
+    assert not proof._interpreter_supported((3, 12, 0), "cpython")
+    assert not proof._interpreter_supported((3, 13, 0), "cpython")
+    assert not proof._interpreter_supported((3, 10, 0), "cpython")
+    assert not proof._interpreter_supported((3, 11, 0), "pypy")
+
+    # On the supported host interpreter the gate is a no-op; unsupported hosts
+    # are covered by the pure predicate above without requiring alternate Pythons.
+    if sys.implementation.name == "cpython" and sys.version_info[:2] == (3, 11):
+        proof._require_supported_interpreter()
+    else:
+        try:
+            proof._require_supported_interpreter()
+        except SystemExit as exc:
+            assert exc.code == 1
+        else:
+            raise AssertionError("expected SystemExit on unsupported interpreter")
 
 
 def test_loader_registers_only_supported_series_types_and_exact_crate() -> None:

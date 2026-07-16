@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Prove that ``rextio-pandas`` resolves its exact VCS core in a clean env.
+"""Prove that ``rextio-pandas`` resolves public ``rextio>=0.1.3,<0.2`` in a clean env.
 
 This builds the current checkout into a wheel, installs that wheel into a
 throwaway virtual environment *with* full dependency resolution (it never skips
 dependency resolution), and then asserts the installed provenance:
 
-* the core's ``direct_url.json`` records a git VCS install pinned to the exact
-  integrated commit and the ``rextio-core-next`` project (not released 0.1.2),
+* the host interpreter is CPython 3.11 (``requires-python >=3.11,<3.12``),
+* the installed ``rextio`` version satisfies ``>=0.1.3,<0.2``,
 * ``PLUGIN_API_VERSION == "1.3"``,
 * the imported ``rextio`` and ``rextio_pandas`` module paths live inside the
   fresh environment,
 * the selected ``rextio.plugins`` entry point is provided by the installed
   ``rextio-pandas`` wheel built from this checkout.
 
-The credential-free ``git+https://github.com/rextio/rextio-core-next.git`` URL
-is resolved without exposing any token: a private ``rextio/rextio-core-next``
-repository is normally cloned with the caller's own git credentials, but for an
-offline/hermetic proof this script injects a transient ``insteadOf`` redirect
-to a local mirror via ``GIT_CONFIG_*`` environment variables (never the global
-git config, and never a URL containing a secret). The recorded commit id is the
-real proof; the transport is interchangeable.
+Unsupported interpreters fail immediately with a clear message before any
+build or install work.
+
+By default pip resolves ``rextio`` from the public index. For offline or
+pre-release local proofs, pass ``--find-links DIR`` (or set
+``REXTIO_FIND_LINKS``) so pip can see a pre-built ``rextio`` wheel/sdist.
+No machine-local absolute path is hard-coded.
 
 Exit code is non-zero on any failed gate so it survives ``python -O``.
 """
@@ -37,14 +37,36 @@ from pathlib import Path
 from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parents[1]
-CORE_COMMIT = "2bd1d1da0cf59e97d1659606bcb1ec12491e032c"
-CORE_PROJECT = "rextio-core-next"
-DEFAULT_MIRROR = Path("/Volumes/Data/workspace/rextio/rextio-core-next")
+REQUIRED_REXTIO_SPEC = ">=0.1.3,<0.2"
+REQUIRED_PLUGIN_API = "1.3"
+REQUIRED_PYTHON = (3, 11)
+REQUIRED_IMPLEMENTATION = "cpython"
 
 
 def _fail(message: str) -> NoReturn:
     print(f"CLEAN-ENV PROOF FAILED: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def _interpreter_supported(
+    version_info: tuple[int, ...] | None = None,
+    implementation: str | None = None,
+) -> bool:
+    """Return True when the interpreter is the supported CPython 3.11 minor."""
+    info = sys.version_info if version_info is None else version_info
+    impl = sys.implementation.name if implementation is None else implementation
+    return impl == REQUIRED_IMPLEMENTATION and info[:2] == REQUIRED_PYTHON
+
+
+def _require_supported_interpreter() -> None:
+    """Fail closed before any build/install work on unsupported interpreters."""
+    if _interpreter_supported():
+        return
+    _fail(
+        "rextio-pandas 0.1.0 requires CPython 3.11 "
+        f"(requires-python >=3.11,<3.12); got {sys.implementation.name} "
+        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    )
 
 
 def _run(command: list[str], *, env: dict[str, str] | None = None) -> str:
@@ -70,26 +92,41 @@ def _build_wheel(dist_dir: Path) -> Path:
     return wheels[-1]
 
 
-def _redirect_env(mirror: Path) -> dict[str, str]:
-    env = dict(os.environ)
-    if mirror.exists():
-        # Credential-free, offline redirect of the public URL to a local mirror.
-        env["GIT_CONFIG_COUNT"] = "1"
-        env["GIT_CONFIG_KEY_0"] = f"url.file://{mirror}.insteadOf"
-        env["GIT_CONFIG_VALUE_0"] = f"https://github.com/rextio/{CORE_PROJECT}.git"
-    return env
+def _parse_version(value: str) -> tuple[int, int, int]:
+    core = value.split("+", 1)[0].split("-", 1)[0]
+    parts = core.split(".")
+    major = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
+    minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    return major, minor, patch
+
+
+def _rextio_version_supported(value: str) -> bool:
+    version = _parse_version(value)
+    return (0, 1, 3) <= version < (0, 2, 0)
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Build, install into a clean env, and assert core-resolution provenance."""
+    """Build, install into a clean env, and assert dependency provenance."""
+    _require_supported_interpreter()
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--mirror",
+        "--find-links",
         type=Path,
-        default=DEFAULT_MIRROR,
-        help="Local git mirror used for a credential-free offline redirect.",
+        default=None,
+        help=(
+            "Optional local directory of wheels/sdists for offline resolution "
+            "(also accepted via REXTIO_FIND_LINKS). No default machine path."
+        ),
     )
     args = parser.parse_args(argv)
+
+    find_links = args.find_links
+    if find_links is None:
+        env_links = os.environ.get("REXTIO_FIND_LINKS", "").strip()
+        if env_links:
+            find_links = Path(env_links).expanduser()
 
     with tempfile.TemporaryDirectory(prefix="rextio-pandas-cleanenv-") as tmp:
         tmp_path = Path(tmp)
@@ -102,11 +139,19 @@ def main(argv: list[str] | None = None) -> int:
         if not py.exists():  # pragma: no cover - non-posix layout
             py = env_dir / "Scripts" / "python.exe"
 
-        install_env = _redirect_env(args.mirror)
-        _run(
-            [str(py), "-m", "pip", "install", "--disable-pip-version-check", str(wheel)],
-            env=install_env,
-        )
+        install_cmd = [
+            str(py),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+        ]
+        if find_links is not None:
+            if not find_links.is_dir():
+                _fail(f"--find-links {find_links} is not a directory")
+            install_cmd.extend(["--find-links", str(find_links.resolve())])
+        install_cmd.append(str(wheel))
+        _run(install_cmd)
 
         probe = r"""
 import importlib.metadata as md
@@ -118,12 +163,14 @@ from rextio.plugins.api import PLUGIN_API_VERSION
 report["api"] = PLUGIN_API_VERSION
 report["rextio_file"] = rextio.__file__
 report["rextio_pandas_file"] = rextio_pandas.__file__
+report["rextio_pandas_version"] = rextio_pandas.__version__
 
 core = md.distribution("rextio")
 report["core_version"] = core.version
 report["core_direct_url"] = core.read_text("direct_url.json")
 
 pandas_dist = md.distribution("rextio-pandas")
+report["plugin_version"] = pandas_dist.version
 report["plugin_direct_url"] = pandas_dist.read_text("direct_url.json")
 
 eps = [
@@ -139,26 +186,38 @@ print(json.dumps(report))
 
     env_root = str(env_dir.resolve())
 
-    if report["api"] != "1.3":
-        _fail(f"PLUGIN_API_VERSION is {report['api']!r}, expected '1.3'")
+    if report["api"] != REQUIRED_PLUGIN_API:
+        _fail(f"PLUGIN_API_VERSION is {report['api']!r}, expected {REQUIRED_PLUGIN_API!r}")
+    if not _rextio_version_supported(report["core_version"]):
+        _fail(
+            f"rextio {report['core_version']!r} is outside the supported range "
+            f"{REQUIRED_REXTIO_SPEC}"
+        )
+    if report.get("plugin_version") != "0.1.0":
+        _fail(
+            f"installed rextio-pandas metadata version is {report.get('plugin_version')!r}, "
+            "expected 0.1.0"
+        )
+    if report.get("rextio_pandas_version") != "0.1.0":
+        _fail(
+            f"imported rextio_pandas.__version__ is {report.get('rextio_pandas_version')!r}, "
+            "expected 0.1.0"
+        )
     if not report["rextio_file"].startswith(env_root):
         _fail(f"imported rextio is outside the fresh env: {report['rextio_file']}")
     if not report["rextio_pandas_file"].startswith(env_root):
         _fail(f"imported rextio_pandas is outside the fresh env: {report['rextio_pandas_file']}")
 
-    core_du = json.loads(report["core_direct_url"] or "{}")
-    vcs = core_du.get("vcs_info") or {}
-    if vcs.get("vcs") != "git":
-        _fail(f"core direct_url is not a git VCS install: {core_du}")
-    if vcs.get("commit_id") != CORE_COMMIT:
-        _fail(f"core commit_id is {vcs.get('commit_id')!r}, expected {CORE_COMMIT}")
-    requested = vcs.get("requested_revision")
-    if requested not in (None, CORE_COMMIT):
-        _fail(f"core requested_revision is {requested!r}, expected the pinned commit")
-    if CORE_PROJECT not in core_du.get("url", ""):
-        _fail(f"core direct_url URL does not name {CORE_PROJECT}: {core_du.get('url')!r}")
-    if "ghp_" in core_du.get("url", "") or "x-access-token" in core_du.get("url", ""):
-        _fail("core direct_url URL leaks a credential")
+    core_du_raw = report.get("core_direct_url")
+    if core_du_raw:
+        core_du = json.loads(core_du_raw)
+        url = core_du.get("url", "")
+        if (
+            "ghp_" in url
+            or "x-access-token" in url
+            or "@" in url.split("://", 1)[-1].split("/", 1)[0]
+        ):
+            _fail("core direct_url URL leaks a credential")
 
     eps = report["entry_points"]
     if not any(

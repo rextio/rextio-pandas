@@ -20,7 +20,7 @@ DIAGNOSTIC_BODY = "RXTP-PANDAS-003"
 RUNTIME_ERRORS = {
     "version": (
         "rextio-pandas requires CPython 3.11, pandas==2.3.3, and numpy==2.3.5 "
-        "for this private incubator"
+        "for this public alpha release"
     ),
     "series_class": "rextio-pandas Series contract requires an exact pandas.Series",
     "series_empty": "rextio-pandas Series contract does not accept an empty Series",

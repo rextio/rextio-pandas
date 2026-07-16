@@ -497,6 +497,864 @@ else:
     assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
 
 
+def test_inherited_map_values_authority_tampering_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+import pandas.core.base as base
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_map_values_owner = next(cls for cls in pd.Series.__mro__ if "_map_values" in cls.__dict__)
+assert _map_values_owner is base.IndexOpsMixin
+
+def _forged_map_values(self, mapper, na_action=None):
+    return np.full(len(self), -999.0, dtype=np.float64)
+
+_map_values_owner._map_values = _forged_map_values
+assert pd.Series.__dict__["map"] is _map_descriptor
+assert pd.Series.map is _map_descriptor
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-999.0, -999.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"mutated Series._map_values was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_instance_map_values_shadow_is_rejected(project: CertifiedProject) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+s.__dict__["_map_values"] = lambda mapper, na_action=None: np.full(
+    len(s), -998.0, dtype=np.float64
+)
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-998.0, -998.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"instance _map_values shadow was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_direct_series_map_values_override_is_rejected(project: CertifiedProject) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+import pandas.core.base as base
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_base_descriptor = base.IndexOpsMixin.__dict__["_map_values"]
+
+def _forged_map_values(self, mapper, na_action=None):
+    return np.full(len(self), -997.0, dtype=np.float64)
+
+pd.Series._map_values = _forged_map_values
+assert base.IndexOpsMixin.__dict__["_map_values"] is _base_descriptor
+assert pd.Series.__dict__["map"] is _map_descriptor
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-997.0, -997.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"direct Series._map_values override was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_algorithms_map_array_replacement_is_rejected(project: CertifiedProject) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+import pandas.core.algorithms as algorithms
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_map_values_descriptor = pd.Series._map_values
+
+def _forged_map_array(arr, mapper, na_action=None, convert=True):
+    return np.full(len(arr), -996.0, dtype=np.float64)
+
+algorithms.map_array = _forged_map_array
+assert pd.Series.__dict__["map"] is _map_descriptor
+assert pd.Series._map_values is _map_values_descriptor
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-996.0, -996.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"algorithms.map_array replacement was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_algorithms_map_array_cached_builtins_replacement_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import builtins
+import types
+import pandas as pd
+import pandas.core.algorithms as algorithms
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_original_map_array = algorithms.map_array
+_module_globals = _original_map_array.__globals__
+_canonical_builtins = _module_globals["__builtins__"]
+assert _canonical_builtins is builtins.__dict__
+
+_forged_builtins = dict(builtins.__dict__)
+_forged_builtins["len"] = lambda value: 0
+_module_globals["__builtins__"] = _forged_builtins
+try:
+    _forged_map_array = types.FunctionType(
+        _original_map_array.__code__,
+        _module_globals,
+        _original_map_array.__name__,
+        _original_map_array.__defaults__,
+        _original_map_array.__closure__,
+    )
+finally:
+    _module_globals["__builtins__"] = _canonical_builtins
+
+_forged_map_array.__module__ = _original_map_array.__module__
+_forged_map_array.__qualname__ = _original_map_array.__qualname__
+_forged_map_array.__kwdefaults__ = _original_map_array.__kwdefaults__
+algorithms.map_array = _forged_map_array
+
+assert _forged_map_array.__globals__ is _module_globals
+assert _forged_map_array.__builtins__ is _forged_builtins
+assert _forged_map_array.__builtins__ is not builtins.__dict__
+assert _module_globals["__builtins__"] is builtins.__dict__
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [1.0, 2.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"cached function builtins replacement was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_canonical_builtins_len_mutation_after_import_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    """Mutating builtins.len after native import must fail closed.
+
+    Container identity of ``__builtins__ is builtins.__dict__`` still holds, but
+    fallback can diverge while native previously still accepted. Independent
+    structural authority on ``len`` rejects the pure-Python swap.
+    """
+    body = """
+import builtins
+import pandas as pd
+from pandas_app.kernels import map_f64
+
+series = pd.Series([1.0, 2.0], dtype="float64", name="values")
+descriptor = pd.Series.__dict__["map"]
+target_array = series._values
+original_len = builtins.len
+
+def selective_len(value):
+    if value is target_array:
+        return 0
+    return original_len(value)
+
+builtins.len = selective_len
+try:
+    fallback = descriptor(series, lambda value: value * 2.0).tolist()
+    try:
+        native = map_f64(series)
+    except Exception as exc:
+        print(type(exc).__name__)
+        print(str(exc))
+        print(repr(fallback))
+    else:
+        raise SystemExit(
+            f"canonical builtins.len mutation after import was accepted: "
+            f"fallback={fallback!r} native={native.tolist()!r}"
+        )
+finally:
+    builtins.len = original_len
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    lines = completed.stdout.splitlines()
+    assert lines[0] == "TypeError"
+    assert lines[1] == RUNTIME_ERRORS["series_method"]
+    # Fallback under the mutated builtin can differ from honest map semantics.
+    assert lines[2] == "[1.0, 2.0]"
+
+
+def test_canonical_builtins_len_mutation_before_import_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    """Mutating builtins.len before native import must also fail closed.
+
+    Prevents any import-time snapshot of ``len`` from bypassing call-time
+    structural authority validation.
+    """
+    body = """
+import builtins
+import pandas as pd
+
+series = pd.Series([1.0, 2.0], dtype="float64", name="values")
+descriptor = pd.Series.__dict__["map"]
+target_array = series._values
+original_len = builtins.len
+
+def selective_len(value):
+    if value is target_array:
+        return 0
+    return original_len(value)
+
+builtins.len = selective_len
+try:
+    fallback = descriptor(series, lambda value: value * 2.0).tolist()
+    from pandas_app.kernels import map_f64
+
+    try:
+        native = map_f64(series)
+    except Exception as exc:
+        print(type(exc).__name__)
+        print(str(exc))
+        print(repr(fallback))
+    else:
+        raise SystemExit(
+            f"canonical builtins.len mutation before import was accepted: "
+            f"fallback={fallback!r} native={native.tolist()!r}"
+        )
+finally:
+    builtins.len = original_len
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    lines = completed.stdout.splitlines()
+    assert lines[0] == "TypeError"
+    assert lines[1] == RUNTIME_ERRORS["series_method"]
+    assert lines[2] == "[1.0, 2.0]"
+
+
+def test_mutable_function_type_anchor_cannot_accept_forged_callable(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import types
+import numpy as np
+import pandas as pd
+import pandas.core.algorithms as algorithms
+import pandas.core.base as base
+import pandas.core.generic as generic
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_map_values_descriptor = base.IndexOpsMixin.__dict__["_map_values"]
+_map_array_descriptor = algorithms.map_array
+_constructor_property = pd.Series.__dict__["_constructor"]
+_finalize_descriptor = generic.NDFrame.__dict__["__finalize__"]
+_to_numpy_descriptor = base.IndexOpsMixin.__dict__["to_numpy"]
+
+def _forged_map_array(arr, mapper, na_action=None, convert=True):
+    return np.full(len(arr), -981.0, dtype=np.float64)
+
+class _ForgedFunction:
+    def __init__(self, original, replacement=None):
+        self.__module__ = original.__module__
+        self.__qualname__ = original.__qualname__
+        self.__globals__ = original.__globals__
+        self.__closure__ = original.__closure__
+        self.__code__ = original.__code__
+        self.__kwdefaults__ = original.__kwdefaults__
+        self.__defaults__ = original.__defaults__
+        self._original = original
+        self._replacement = replacement
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self
+        return lambda *args, **kwargs: self(instance, *args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        target = self._replacement or self._original
+        return target(*args, **kwargs)
+
+pd.Series.map = _ForgedFunction(_map_descriptor)
+base.IndexOpsMixin._map_values = _ForgedFunction(_map_values_descriptor)
+algorithms.map_array = _ForgedFunction(_map_array_descriptor, _forged_map_array)
+pd.Series._constructor = property(_ForgedFunction(_constructor_property.fget))
+generic.NDFrame.__finalize__ = _ForgedFunction(_finalize_descriptor)
+base.IndexOpsMixin.to_numpy = _ForgedFunction(_to_numpy_descriptor)
+types.FunctionType = _ForgedFunction
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-981.0, -981.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"mutable FunctionType anchor accepted forged callables: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_map_values_algorithms_global_replacement_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import types
+import numpy as np
+import pandas as pd
+import pandas.core.algorithms as algorithms
+import pandas.core.base as base
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_map_values_descriptor = base.IndexOpsMixin.__dict__["_map_values"]
+_canonical_map_array = algorithms.map_array
+
+def _forged_map_array(arr, mapper, na_action=None, convert=True):
+    return np.full(len(arr), -995.0, dtype=np.float64)
+
+base.algorithms = types.SimpleNamespace(map_array=_forged_map_array)
+assert base.IndexOpsMixin.__dict__["_map_values"] is _map_values_descriptor
+assert algorithms.map_array is _canonical_map_array
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-995.0, -995.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"_map_values algorithms global replacement was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_lib_map_infer_replacement_is_rejected(project: CertifiedProject) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+import pandas._libs.lib as lib
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_map_array_descriptor = pd.Series._map_values.__globals__["algorithms"].map_array
+
+def _forged_map_infer(arr, mapper, convert=True, ignore_na=False):
+    return np.full(len(arr), -994.0, dtype=np.float64)
+
+lib.map_infer = _forged_map_infer
+assert pd.Series.__dict__["map"] is _map_descriptor
+assert pd.Series._map_values.__globals__["algorithms"].map_array is _map_array_descriptor
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-994.0, -994.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"lib.map_infer replacement was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_lib_map_infer_callable_object_metadata_mimic_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+import pandas._libs.lib as lib
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_original_map_infer = lib.map_infer
+
+class CallableMapInfer:
+    def __init__(self, original):
+        self.__module__ = original.__module__
+        self.__qualname__ = original.__qualname__
+        self.__globals__ = original.__globals__
+        self.__closure__ = original.__closure__
+        self.__code__ = original.__code__
+        self.__kwdefaults__ = original.__kwdefaults__
+        self.__defaults__ = original.__defaults__
+
+    def __call__(self, arr, mapper, convert=True, ignore_na=False):
+        return np.full(len(arr), -987.0, dtype=np.float64)
+
+CallableMapInfer.__module__ = type(_original_map_infer).__module__
+CallableMapInfer.__qualname__ = type(_original_map_infer).__qualname__
+lib.map_infer = CallableMapInfer(_original_map_infer)
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-987.0, -987.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"lib.map_infer callable-object metadata mimic was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_lib_map_infer_runtime_type_anchor_replacement_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+import pandas._libs.lib as lib
+import _cython_3_1_4 as cython_runtime
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_original_map_infer = lib.map_infer
+_original_function_type = cython_runtime.cython_function_or_method
+
+class CallableMapInfer:
+    def __init__(self, original):
+        self.__module__ = original.__module__
+        self.__qualname__ = original.__qualname__
+        self.__globals__ = original.__globals__
+        self.__closure__ = original.__closure__
+        self.__code__ = original.__code__
+        self.__kwdefaults__ = original.__kwdefaults__
+        self.__defaults__ = original.__defaults__
+
+    def __call__(self, arr, mapper, convert=True, ignore_na=False):
+        return np.full(len(arr), -986.0, dtype=np.float64)
+
+CallableMapInfer.__module__ = _original_function_type.__module__
+CallableMapInfer.__qualname__ = _original_function_type.__qualname__
+cython_runtime.cython_function_or_method = CallableMapInfer
+lib.map_infer = CallableMapInfer(_original_map_infer)
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-986.0, -986.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"lib.map_infer runtime type-anchor replacement was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_algorithms_lib_global_replacement_is_rejected(project: CertifiedProject) -> None:
+    body = """
+import types
+import numpy as np
+import pandas as pd
+import pandas._libs.lib as lib
+import pandas.core.algorithms as algorithms
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_map_array_descriptor = algorithms.map_array
+_canonical_map_infer = lib.map_infer
+
+def _forged_map_infer(arr, mapper, convert=True, ignore_na=False):
+    return np.full(len(arr), -993.0, dtype=np.float64)
+
+algorithms.lib = types.SimpleNamespace(
+    map_infer=_forged_map_infer,
+    map_infer_mask=lib.map_infer_mask,
+)
+assert algorithms.map_array is _map_array_descriptor
+assert lib.map_infer is _canonical_map_infer
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-993.0, -993.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"algorithms.lib global replacement was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_series_constructor_property_replacement_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+
+def _forged_constructor(values, index=None, copy=False):
+    return pd.Series(np.full(len(values), -992.0), index=index, dtype="float64")
+
+pd.Series._constructor = property(lambda self: _forged_constructor)
+assert pd.Series.__dict__["map"] is _map_descriptor
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-992.0, -992.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"Series._constructor replacement was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_constructor_series_global_replacement_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+import pandas.core.series as series_mod
+from pandas_app.kernels import map_f64
+
+_public_series = pd.Series
+_map_descriptor = _public_series.__dict__["map"]
+_constructor_property = _public_series.__dict__["_constructor"]
+s = _public_series([1.0, 2.0], dtype="float64", name="values")
+_forged_result = _public_series([-991.0, -991.0], dtype="float64")
+
+def _forged_series(values, index=None, copy=False, **kwargs):
+    return _forged_result
+
+series_mod.Series = _forged_series
+assert pd.Series is _public_series
+assert _public_series.__dict__["_constructor"] is _constructor_property
+
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-991.0, -991.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"_constructor Series global replacement was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_series_init_transitive_behavior_is_shared_by_native_materialization(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_original_init = pd.Series.__init__
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+
+def _conditional_init(self, data=None, *args, **kwargs):
+    if "index" in kwargs and kwargs.get("copy") is False:
+        data = np.full(len(data), -985.0, dtype=np.float64)
+    _original_init(self, data, *args, **kwargs)
+
+pd.Series.__init__ = _conditional_init
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-985.0, -985.0]
+
+native = map_f64(s)
+assert native.tolist() == fallback.tolist(), (
+    f"constructor envelope diverged: fallback={fallback.tolist()} native={native.tolist()}"
+)
+assert native.index is s.index
+assert native.name == s.name
+print("shared-constructor-envelope")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["shared-constructor-envelope"]
+
+
+def test_series_constructor_helper_behavior_is_shared_by_native_materialization(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import numpy as np
+import pandas as pd
+import pandas.core.series as series_mod
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_original_sanitize_array = series_mod.sanitize_array
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+
+def _conditional_sanitize_array(data, index, dtype=None, copy=False, *args, **kwargs):
+    if index is s.index and copy is False:
+        return np.full(len(data), -984.0, dtype=np.float64)
+    return _original_sanitize_array(data, index, dtype, copy, *args, **kwargs)
+
+series_mod.sanitize_array = _conditional_sanitize_array
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-984.0, -984.0]
+
+native = map_f64(s)
+assert native.tolist() == fallback.tolist()
+assert native.index is s.index
+assert native.name == s.name
+print("shared-constructor-helper")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["shared-constructor-helper"]
+
+
+def test_inherited_ndframe_finalize_replacement_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import pandas as pd
+import pandas.core.generic as generic
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+
+def _forged_finalize(self, other, method=None, **kwargs):
+    self.iloc[:] = -990.0
+    return self
+
+generic.NDFrame.__finalize__ = _forged_finalize
+assert pd.Series.__dict__["map"] is _map_descriptor
+assert pd.Series.__finalize__ is _forged_finalize
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-990.0, -990.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"NDFrame.__finalize__ replacement was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_direct_series_finalize_shadow_is_rejected(project: CertifiedProject) -> None:
+    body = """
+import pandas as pd
+import pandas.core.generic as generic
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_base_finalize = generic.NDFrame.__dict__["__finalize__"]
+
+def _forged_finalize(self, other, method=None, **kwargs):
+    self.iloc[:] = -989.0
+    return self
+
+pd.Series.__finalize__ = _forged_finalize
+assert generic.NDFrame.__dict__["__finalize__"] is _base_finalize
+assert pd.Series.__dict__["map"] is _map_descriptor
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-989.0, -989.0]
+
+try:
+    native = map_f64(s)
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit(
+        f"direct Series.__finalize__ shadow was accepted: "
+        f"fallback={fallback.tolist()} native={native.tolist()}"
+    )
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
+
+
+def test_authority_is_revalidated_after_tamper_and_restore_in_one_process(
+    project: CertifiedProject,
+) -> None:
+    body = f"""
+import numpy as np
+import pandas as pd
+import pandas.core.algorithms as algorithms
+from pandas_app.kernels import map_f64
+
+_map_descriptor = pd.Series.__dict__["map"]
+_original_map_array = algorithms.map_array
+_expected_error = {RUNTIME_ERRORS["series_method"]!r}
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+
+first = map_f64(s)
+assert first.tolist() == [2.0, 4.0]
+
+def _forged_map_array(arr, mapper, na_action=None, convert=True):
+    return np.full(len(arr), -988.0, dtype=np.float64)
+
+algorithms.map_array = _forged_map_array
+fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert fallback.tolist() == [-988.0, -988.0]
+try:
+    map_f64(s)
+except TypeError as exc:
+    assert str(exc) == _expected_error
+else:
+    raise SystemExit("tampered authority was accepted after an earlier valid call")
+
+algorithms.map_array = _original_map_array
+restored_fallback = _map_descriptor(s, lambda value: value * 2.0)
+assert restored_fallback.tolist() == [2.0, 4.0]
+second = map_f64(s)
+assert second.tolist() == [2.0, 4.0]
+print("valid-rejected-restored")
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["valid-rejected-restored"]
+
+
 @pytest.mark.parametrize(
     "setup",
     [

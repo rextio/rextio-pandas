@@ -41,17 +41,34 @@ indexes stay outside the native route.
 At runtime, accepted inputs must be an exact, nonempty `pandas.Series` with
 exact NumPy `float64` or `int64` storage, an unnamed
 `RangeIndex(0, len, 1)`, empty `.attrs`,
-`flags.allows_duplicate_labels is True`, and an unmodified public
-`Series.map`/`Series.to_numpy` method identity. `Series.name` is `None` or
-`str`. Contract misses raise stable `TypeError` messages; they do not silently
-deopt. Strided arrays are copied by logical ndarray indexing into owned Rust
-storage.
+`flags.allows_duplicate_labels is True`, and an unmodified reachable pandas
+authority graph. That graph covers `Series.map`, inherited
+`IndexOpsMixin._map_values`, `pandas.core.algorithms.map_array`, Cython
+`pandas._libs.lib.map_infer`, `Series._constructor`, inherited
+`NDFrame.__finalize__`, and `Series.to_numpy`. Plain Python members require the
+exact non-mutable CPython `PyFunction` type plus their frozen executable and
+global-binding authorities. Every builtin name those frozen authorities load is
+validated independently against a structural/C-level rule (not by comparing two
+lookups from the live mutable `builtins` mapping); pure-Python mutation of
+`builtins.__dict__` before or after native-module import therefore fails closed
+with the stable Series-method `TypeError`. Malicious native extensions capable
+of fabricating CPython builtin objects remain out of scope. The Cython callable
+requires its exact callable type and a frozen type/metatype structure, so
+coordinated replacement of the live type anchor is rejected. `Series.name` is
+`None` or `str`. Contract misses raise stable `TypeError` messages; they do not
+silently deopt. Strided arrays are copied by logical ndarray indexing into
+owned Rust storage.
 
-The boundary validates and extracts once, a deterministic helper runs the
-complete UDF in one GIL-detached Rust loop with no Python callback, and pandas
-materializes the result once. The successful result preserves exact Series
-class, dtype, values (including NaN/Inf/signed zero), order, RangeIndex, name,
-and default metadata.
+Every public native call performs the complete authority validation once while
+extracting the input. A deterministic helper then runs the complete UDF in one
+GIL-detached Rust loop with no Python callback, and pandas materializes the
+result once through the same envelope as ordinary `Series.map`:
+`source._constructor(values, index=source.index, copy=False).__finalize__(source,
+method="map")`. The normal source-carrying path does not repeat validation at
+materialization. CPython `-O` (`optimize=1`) has a separately frozen
+`NDFrame.__finalize__` digest; `-OO` is intentionally unsupported and fails
+closed. The successful result preserves exact Series class, dtype, values
+(including NaN/Inf/signed zero), order, RangeIndex, name, and default metadata.
 
 Both materialized Series types own the shared Rust boundary support through
 plugin API 1.3 `PluginType.helpers`. Core therefore emits the extract/type/
@@ -111,31 +128,36 @@ Vectorized NumPy/pandas and cold/warm Numba remain context-only lanes.
 DataFrame.apply has no product cell, context cell, break-even entry, or speedup
 claim in the authoritative benchmark.
 
-### Authoritative Series-only result (2026-07-15)
+### Authoritative Series-only result (2026-07-16)
 
 The retained full run is schema 4 at plugin commit
-`152ff9a0457ae4b4d83bfa2b21429cfee784a931` and core commit
+`35d651b1684c6a48a6222e19635df853840aed8e` and core commit
 `2bd1d1da0cf59e97d1659606bcb1ec12491e032c`, with nine counterbalanced paired
-samples per size. All six cells passed the fail-closed headline-eligibility
-gates and had identical native/fallback correctness digests.
+samples per size, a 10 ms minimum calibration target, and seed `20260715`. All
+six cells passed the fail-closed headline-eligibility gates and had identical
+native/fallback correctness digests. The check/build evidence reports one
+accepted native route and zero rejected routes under plugin API 1.3.
 
 | Size | Native median (µs) | pandas fallback median (µs) | Paired native/fallback ratio (95% CI) | Result |
 | ---: | ---: | ---: | ---: | --- |
-| 1 | 63.521 | 9.393 | 6.798 (6.749–6.917) | native 6.80× slower |
-| 10 | 63.575 | 10.052 | 6.330 (6.092–6.497) | native 6.33× slower |
-| 100 | 64.736 | 15.546 | 4.127 (4.098–4.195) | native 4.13× slower |
-| 1,000 | 64.894 | 72.838 | 0.890 (0.879–0.909) | native 1.12× faster |
-| 10,000 | 82.328 | 662.190 | 0.126 (0.121–0.128) | native 7.96× faster |
-| 100,000 | 215.630 | 6,662.083 | 0.032 (0.031–0.033) | native 31.08× faster |
+| 1 | 93.938 | 9.610 | 9.802362 (9.589628–10.017574) | native 9.80× slower |
+| 10 | 96.817 | 10.773 | 9.183213 (7.893036–9.481407) | native 9.18× slower |
+| 100 | 92.650 | 15.694 | 5.914319 (5.702861–6.057157) | native 5.91× slower |
+| 1,000 | 100.707 | 74.341 | 1.354658 (1.295011–1.412292) | native 1.35× slower |
+| 10,000 | 109.263 | 666.875 | 0.162690 (0.157637–0.166345) | native 6.15× faster |
+| 100,000 | 254.839 | 6,924.520 | 0.037236 (0.036711–0.037654) | native 26.86× faster |
 
 The paired ratio is the median of the nine within-pair ratios, not the quotient
 of the separately rounded lane medians.
 
-The **sustained measured break-even is 1,000 elements**: it is the first
+The **sustained measured break-even is 10,000 elements**: it is the first
 measured size whose paired 95% CI is wholly below 1.0 and remains so at every
 larger measured size. This is not an interpolated claim about the interval
-between 100 and 1,000, nor an extrapolation beyond 100,000. The small-input
-losses are part of the result, not excluded from the headline evidence.
+between 1,000 and 10,000, nor an extrapolation beyond 100,000. Complete
+per-public-call correctness validation supersedes the earlier 1,000-element
+threshold: native is still about 1.35× slower at 1,000, then about 6.15× faster
+at 10,000 and 26.86× faster at 100,000. The small-input losses are part of the
+result, not excluded from the headline evidence.
 Vectorized NumPy/pandas and warm Numba were faster than the native route at
 every measured size, but remain explicitly labeled context-only rather than
 Rextio target claims. See [the benchmark evidence](benchmarks/results/latest.json)

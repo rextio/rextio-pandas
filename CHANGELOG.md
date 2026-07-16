@@ -2,6 +2,80 @@
 
 ## 0.0.1 (unreleased private incubator)
 
+### Series.map authority closure (2026-07-16)
+
+- Close the reachable `Series.map` authority chain over inherited
+  `IndexOpsMixin._map_values`, `pandas.core.algorithms.map_array`, Cython
+  `pandas._libs.lib.map_infer`, `Series._constructor`, inherited
+  `NDFrame.__finalize__`, and `Series.to_numpy`. Plain Python authorities now
+  require PyO3's exact, non-mutable CPython `PyFunction` type instead of the
+  user-mutable `types.FunctionType` module attribute, and each function's cached
+  `__builtins__` must be the exact canonical `builtins` module dictionary. A
+  real-Cargo regression reproduces and rejects both the coordinated
+  forged-callable attack and a canonical-code/globals/defaults replacement whose
+  privately cached builtins changed fallback output while native execution
+  remained unchanged.
+- Independently validate every Python builtin name consumed by that frozen
+  authority graph. Canonical `builtins.__dict__` container identity remains
+  necessary but not sufficient: each resolved binding is checked by a
+  structural/C-level authority (exact `builtin_function_or_method` plus fixed
+  module/name/qualname and canonical builtins-module `__self__` for C-function
+  names; PyO3 static type anchors for loaded types and exceptions) rather than
+  by comparing two live lookups from the mutable `builtins` mapping. Real-Cargo
+  regressions reject pure-Python `builtins.len` mutation both before and after
+  native-module import with the stable Series-method `TypeError`. Malicious
+  native extensions capable of fabricating CPython builtin objects remain out
+  of scope.
+- Bind the Cython `map_infer` authority to its exact callable type plus a frozen
+  type/metatype structure, including immutable layout/MRO anchors, so replacing
+  the callable and its live type name together does not pass validation.
+- Carry the source Series through native execution and materialize through the
+  exact fallback envelope:
+  `_constructor(values, index=source.index, copy=False).__finalize__(source,
+  method="map")`. The full authority graph is validated once per public call at
+  extraction and is not repeated on the normal source-carrying materialization
+  path. CPython optimize level 1 uses a separately frozen `__finalize__` digest;
+  `-OO` remains unsupported and fails closed.
+
+### Current authoritative Series.map benchmark evidence (2026-07-16)
+
+- Retain the schema-4 full-run JSON plus hash-bound `check.json`/`build.json`
+  evidence for plugin commit `35d651b1684c6a48a6222e19635df853840aed8e`,
+  core `2bd1d1da0cf59e97d1659606bcb1ec12491e032c`, and API 1.3. The run used nine
+  paired repetitions, a 10 ms minimum calibration target, and seed `20260715`;
+  all six cells are headline-eligible and correctness-matched, with one
+  accepted native route and zero rejections.
+- Record native/fallback medians in microseconds and paired ratios (95% CI):
+  1 element `93.938/9.610`, `9.802362` (`9.589628–10.017574`); 10 elements
+  `96.817/10.773`, `9.183213` (`7.893036–9.481407`); 100 elements
+  `92.650/15.694`, `5.914319` (`5.702861–6.057157`); 1,000 elements
+  `100.707/74.341`, `1.354658` (`1.295011–1.412292`); 10,000 elements
+  `109.263/666.875`, `0.162690` (`0.157637–0.166345`); and 100,000 elements
+  `254.839/6,924.520`, `0.037236` (`0.036711–0.037654`).
+- Set the sustained measured break-even to **10,000 elements**. Complete
+  per-public-call validation supersedes the historical 1,000-element threshold:
+  native is about 1.35× slower at 1,000, 6.15× faster at 10,000, and 26.86×
+  faster at 100,000. Vectorized NumPy/pandas and Numba remain context-only lanes,
+  never Rextio target claims.
+
+### Prior authoritative Series.map benchmark evidence (2026-07-16; superseded by 35d651b)
+
+- Retain the schema-4 full-run numbers previously bound to plugin commit
+  `c1ae2e734c48f795d4c4ca418ba4cf20f53b4b93`, core
+  `2bd1d1da0cf59e97d1659606bcb1ec12491e032c`, and API 1.3 (nine paired
+  repetitions, 10 ms calibration target, seed `20260715`; all six cells
+  headline-eligible). That run predated the builtin-authority fix at
+  `35d651b1684c6a48a6222e19635df853840aed8e`.
+- Recorded native/fallback medians and paired ratios (95% CI) were: 1 element
+  `84.939/9.324`, `9.074455` (`8.828482–9.236807`); 10 elements
+  `85.634/10.019`, `8.503623` (`8.345566–8.847237`); 100 elements
+  `86.281/15.655`, `5.520391` (`5.311342–5.544713`); 1,000 elements
+  `86.051/73.879`, `1.165308` (`1.154215–1.202724`); 10,000 elements
+  `101.898/654.865`, `0.155077` (`0.154832–0.158761`); and 100,000 elements
+  `244.310/6,729.854`, `0.035900` (`0.035272–0.037772`). Sustained measured
+  break-even was **10,000 elements** (about 1.17× slower at 1,000, 6.45× faster
+  at 10,000, and 27.86× faster at 100,000).
+
 ### API 1.3 finalization
 
 - Advance every dependency, provenance, clean-environment, and benchmark gate
@@ -29,7 +103,7 @@
   `[-999.0, -999.0]`. The partial class/base/global authority graph is therefore
   not a sound product gate and is not extended in this pass.
 
-### Authoritative Series.map benchmark evidence
+### Historical Series.map benchmark evidence (2026-07-15; superseded)
 
 - Retain the schema-4 full-run JSON plus hash-bound `check.json`/`build.json`
   evidence for plugin commit `152ff9a0457ae4b4d83bfa2b21429cfee784a931`, core

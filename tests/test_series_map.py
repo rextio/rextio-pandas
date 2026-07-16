@@ -242,6 +242,20 @@ def test_lower_is_deterministic_and_contains_pure_detached_hot_loop() -> None:
     assert "if " in hot
 
 
+def test_series_map_materializer_reuses_extraction_time_class_validation() -> None:
+    source = boundary_helpers()
+    materializer = source[
+        source.index("fn __rxtpd_materialize_series") : source.index(
+            "fn __rxtpd_materialize_frame_f64"
+        )
+    ]
+
+    assert materializer.count("__rxtpd_pinned_series_class") == 1
+    assert materializer.index("let Some(source) = source else") < materializer.index(
+        "__rxtpd_pinned_series_class"
+    )
+
+
 def _write_module(root: Path, source: str) -> None:
     module = root / "src" / "app" / "kernels.py"
     module.parent.mkdir(parents=True)

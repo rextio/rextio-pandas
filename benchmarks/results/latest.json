@@ -7,17 +7,17 @@
           "correctness_digest": "09a58caa21da99a69642040f66834dab348d9879af0c7313ceb249d3c12e0ea9",
           "loops": 2048,
           "matches_fallback_digest": true,
-          "median_ns_per_call": 7055.48095703125,
+          "median_ns_per_call": 7244.20166015625,
           "samples_ns_per_call": [
-            7100.5654296875,
-            6994.587890625,
-            6968.4248046875,
-            7061.970703125,
-            6984.8427734375,
-            7141.458984375,
-            7120.68701171875,
-            7014.58740234375,
-            7055.48095703125
+            7175.98486328125,
+            7104.20703125,
+            6971.638671875,
+            7064.55517578125,
+            7306.884765625,
+            9208.740234375,
+            7434.5703125,
+            7715.25048828125,
+            7244.20166015625
           ]
         }
       },
@@ -27,22 +27,22 @@
       "numba": {
         "available": true,
         "classification": "context-only; JIT compile is not a Rextio target claim",
-        "cold_compile_and_call_ns": 278901375,
+        "cold_compile_and_call_ns": 171592208,
         "correctness_digest": "09a58caa21da99a69642040f66834dab348d9879af0c7313ceb249d3c12e0ea9",
         "matches_fallback_digest": true,
-        "version": "0.62.1",
+        "version": "0.66.0",
         "warm_loops": 2048,
-        "warm_median_ns_per_call": 5491.27197265625,
+        "warm_median_ns_per_call": 5691.97607421875,
         "warm_samples_ns_per_call": [
-          5501.8515625,
-          5425.7607421875,
-          5514.36376953125,
-          5666.52392578125,
-          5429.15869140625,
-          5491.27197265625,
-          5994.62890625,
-          5451.375,
-          5431.05029296875
+          5787.984375,
+          6008.056640625,
+          5630.83935546875,
+          5737.3046875,
+          5680.17578125,
+          5691.97607421875,
+          5561.03515625,
+          5681.96630859375,
+          5850.78955078125
         ]
       },
       "product": {
@@ -51,40 +51,40 @@
           "native": "09a58caa21da99a69642040f66834dab348d9879af0c7313ceb249d3c12e0ea9"
         },
         "loops": {
-          "fallback": 2048,
-          "native": 256
+          "fallback": 1024,
+          "native": 128
         },
         "median_ns_per_call": {
-          "fallback": 9392.923828125,
-          "native": 63520.671875
+          "fallback": 9609.5380859375,
+          "native": 93937.5
         },
         "paired_bootstrap": {
-          "ci95_high": 6.916502500096132,
-          "ci95_low": 6.749214262648266,
-          "median_native_over_fallback": 6.7984505279564065
+          "ci95_high": 10.017574143219692,
+          "ci95_low": 9.58962773612439,
+          "median_native_over_fallback": 9.80236212367752
         },
         "samples_ns_per_call": {
           "fallback": [
-            9392.923828125,
-            9343.404296875,
-            9302.388671875,
-            9548.01416015625,
-            9430.2978515625,
-            9395.03955078125,
-            9327.83984375,
-            9265.03466796875,
-            9422.0986328125
+            9364.3388671875,
+            9661.9873046875,
+            9477.376953125,
+            9478.109375,
+            9703.61328125,
+            9332.3974609375,
+            9609.5380859375,
+            9817.626953125,
+            9666.8291015625
           ],
           "native": [
-            63394.85546875,
-            63520.671875,
-            62843.09765625,
-            62409.015625,
-            64421.38671875,
-            64071.125,
-            74364.74609375,
-            62815.91796875,
-            65167.96875
+            91792.640625,
+            88993.8125,
+            96402.9921875,
+            94910.15625,
+            93054.0390625,
+            92526.6875,
+            93937.5,
+            94486.9765625,
+            107247.0703125
           ]
         },
         "schedule": [
@@ -143,17 +143,17 @@
           "correctness_digest": "327a51f0aa2f0e2024601de27e61bdf6b4116e0f3020c674e7d9177f0c9bd37b",
           "loops": 2048,
           "matches_fallback_digest": true,
-          "median_ns_per_call": 7196.1259765625,
+          "median_ns_per_call": 7698.1201171875,
           "samples_ns_per_call": [
-            7154.35791015625,
-            7127.8076171875,
-            7125.91552734375,
-            7196.1259765625,
-            7253.7841796875,
-            7148.8447265625,
-            7336.0185546875,
-            7345.0927734375,
-            8811.97119140625
+            7652.20166015625,
+            7455.9326171875,
+            7704.2236328125,
+            7697.3671875,
+            7497.74169921875,
+            7698.1201171875,
+            8093.8720703125,
+            10907.6943359375,
+            7730.77392578125
           ]
         }
       },
@@ -163,22 +163,22 @@
       "numba": {
         "available": true,
         "classification": "context-only; JIT compile is not a Rextio target claim",
-        "cold_compile_and_call_ns": 35339083,
+        "cold_compile_and_call_ns": 42584667,
         "correctness_digest": "327a51f0aa2f0e2024601de27e61bdf6b4116e0f3020c674e7d9177f0c9bd37b",
         "matches_fallback_digest": true,
-        "version": "0.62.1",
+        "version": "0.66.0",
         "warm_loops": 2048,
-        "warm_median_ns_per_call": 5322.69287109375,
+        "warm_median_ns_per_call": 5607.564453125,
         "warm_samples_ns_per_call": [
-          5330.0986328125,
-          5307.10888671875,
-          5376.64794921875,
-          5462.32080078125,
-          5307.71875,
-          5211.75146484375,
-          5289.61181640625,
-          5322.69287109375,
-          5364.013671875
+          5677.81591796875,
+          5717.71240234375,
+          5590.087890625,
+          5767.06982421875,
+          5639.24169921875,
+          5584.8388671875,
+          5588.94873046875,
+          5607.564453125,
+          5600.76904296875
         ]
       },
       "product": {
@@ -188,39 +188,39 @@
         },
         "loops": {
           "fallback": 1024,
-          "native": 256
+          "native": 128
         },
         "median_ns_per_call": {
-          "fallback": 10052.001953125,
-          "native": 63574.87109375
+          "fallback": 10772.8271484375,
+          "native": 96817.3828125
         },
         "paired_bootstrap": {
-          "ci95_high": 6.496967483298986,
-          "ci95_low": 6.091895073509584,
-          "median_native_over_fallback": 6.330471742543171
+          "ci95_high": 9.481407372473075,
+          "ci95_low": 7.893036211699164,
+          "median_native_over_fallback": 9.18321259153193
         },
         "samples_ns_per_call": {
           "fallback": [
-            10042.1953125,
-            9942.2197265625,
-            10066.8134765625,
-            10175.6591796875,
-            10052.001953125,
-            10226.033203125,
-            10165.4873046875,
-            9953.125,
-            10040.771484375
+            10807.9423828125,
+            10395.1015625,
+            10819.7431640625,
+            11613.1591796875,
+            10772.8271484375,
+            10440.388671875,
+            10330.2822265625,
+            10610.677734375,
+            17227.1318359375
           ],
           "native": [
-            65243.81640625,
-            64812.3359375,
-            63810.546875,
-            64073.73046875,
-            62716.14453125,
-            62237.140625,
-            61927.08203125,
-            63007.9765625,
-            63574.87109375
+            114643.8828125,
+            96817.3828125,
+            92440.75,
+            91663.0859375,
+            97334.9609375,
+            98989.578125,
+            96060.875,
+            97440.109375,
+            92204.75
           ]
         },
         "schedule": [
@@ -279,17 +279,17 @@
           "correctness_digest": "65ed94180cf242ce34125208a75032145c1d9a4f3e051fd26d2f21f4ea3200b3",
           "loops": 2048,
           "matches_fallback_digest": true,
-          "median_ns_per_call": 7243.8154296875,
+          "median_ns_per_call": 7630.06591796875,
           "samples_ns_per_call": [
-            7267.31396484375,
-            7145.263671875,
-            7266.744140625,
-            7243.8154296875,
-            7274.6171875,
-            7417.52099609375,
-            7190.00244140625,
-            7159.708984375,
-            7206.15673828125
+            7701.2734375,
+            7638.630859375,
+            7778.58447265625,
+            7578.0439453125,
+            7609.96533203125,
+            7608.62255859375,
+            7598.388671875,
+            7672.03759765625,
+            7630.06591796875
           ]
         }
       },
@@ -299,22 +299,22 @@
       "numba": {
         "available": true,
         "classification": "context-only; JIT compile is not a Rextio target claim",
-        "cold_compile_and_call_ns": 37816416,
+        "cold_compile_and_call_ns": 36869375,
         "correctness_digest": "65ed94180cf242ce34125208a75032145c1d9a4f3e051fd26d2f21f4ea3200b3",
         "matches_fallback_digest": true,
-        "version": "0.62.1",
+        "version": "0.66.0",
         "warm_loops": 2048,
-        "warm_median_ns_per_call": 5501.74951171875,
+        "warm_median_ns_per_call": 5720.15380859375,
         "warm_samples_ns_per_call": [
-          5501.74951171875,
-          5511.41357421875,
-          5420.7763671875,
-          5403.6455078125,
-          5502.84814453125,
-          5414.0419921875,
-          5521.3623046875,
-          5470.15380859375,
-          5529.86669921875
+          5707.376953125,
+          5720.15380859375,
+          5508.9921875,
+          5724.751953125,
+          5850.15869140625,
+          5773.9052734375,
+          5669.7998046875,
+          5608.58154296875,
+          6910.60400390625
         ]
       },
       "product": {
@@ -324,39 +324,39 @@
         },
         "loops": {
           "fallback": 1024,
-          "native": 256
+          "native": 128
         },
         "median_ns_per_call": {
-          "fallback": 15546.18359375,
-          "native": 64736.4921875
+          "fallback": 15694.3359375,
+          "native": 92649.7421875
         },
         "paired_bootstrap": {
-          "ci95_high": 4.194982866363967,
-          "ci95_low": 4.097834995105277,
-          "median_native_over_fallback": 4.127253210018118
+          "ci95_high": 6.057157297373512,
+          "ci95_low": 5.70286140367229,
+          "median_native_over_fallback": 5.914319269690818
         },
         "samples_ns_per_call": {
           "fallback": [
-            15723.673828125,
-            15546.18359375,
-            15431.884765625,
-            15712.6064453125,
-            15929.1181640625,
-            15753.0517578125,
-            15440.0634765625,
-            15472.900390625,
-            15505.65625
+            15694.3359375,
+            15716.30859375,
+            15602.091796875,
+            15608.88671875,
+            15939.5341796875,
+            15604.6552734375,
+            15656.5751953125,
+            16007.3642578125,
+            15993.0419921875
           ],
           "native": [
-            63934.24609375,
-            63924.64453125,
-            64736.4921875,
-            65109.05078125,
-            65284.5078125,
-            66017.90625,
-            62907.55078125,
-            65070.15234375,
-            63995.76953125
+            94477.2109375,
+            89627.9296875,
+            92914.390625,
+            89517.25,
+            89142.578125,
+            94519.8515625,
+            92597.984375,
+            92649.7421875,
+            97343.09375
           ]
         },
         "schedule": [
@@ -415,17 +415,17 @@
           "correctness_digest": "b00354d3844bbb00208b813c83150daf598ec0041bcd780b2d1142d0e610b3b7",
           "loops": 2048,
           "matches_fallback_digest": true,
-          "median_ns_per_call": 8631.53076171875,
+          "median_ns_per_call": 8964.33544921875,
           "samples_ns_per_call": [
-            8703.40966796875,
-            8561.70654296875,
-            8712.056640625,
-            8674.31640625,
-            8698.0185546875,
-            8631.53076171875,
-            8617.63525390625,
-            8615.92626953125,
-            8624.9189453125
+            9028.11669921875,
+            8957.35693359375,
+            8845.0927734375,
+            8941.0400390625,
+            8964.33544921875,
+            8969.7470703125,
+            8990.31591796875,
+            8956.11572265625,
+            11089.8642578125
           ]
         }
       },
@@ -435,22 +435,22 @@
       "numba": {
         "available": true,
         "classification": "context-only; JIT compile is not a Rextio target claim",
-        "cold_compile_and_call_ns": 39138500,
+        "cold_compile_and_call_ns": 63692709,
         "correctness_digest": "b00354d3844bbb00208b813c83150daf598ec0041bcd780b2d1142d0e610b3b7",
         "matches_fallback_digest": true,
-        "version": "0.62.1",
+        "version": "0.66.0",
         "warm_loops": 2048,
-        "warm_median_ns_per_call": 5816.8134765625,
+        "warm_median_ns_per_call": 6225.99267578125,
         "warm_samples_ns_per_call": [
-          5785.11572265625,
-          5782.43017578125,
-          5777.75048828125,
-          5826.5380859375,
-          5858.94775390625,
-          5847.43212890625,
-          5771.341796875,
-          5816.8134765625,
-          5864.21728515625
+          6141.703125,
+          5958.6591796875,
+          6189.3515625,
+          6048.62451171875,
+          6236.53173828125,
+          6228.33251953125,
+          6331.94970703125,
+          6225.99267578125,
+          6313.15087890625
         ]
       },
       "product": {
@@ -460,39 +460,39 @@
         },
         "loops": {
           "fallback": 256,
-          "native": 256
+          "native": 32
         },
         "median_ns_per_call": {
-          "fallback": 72838.05078125,
-          "native": 64894.04296875
+          "fallback": 74341.30859375,
+          "native": 100707.03125
         },
         "paired_bootstrap": {
-          "ci95_high": 0.9088017674318769,
-          "ci95_low": 0.8790083573938597,
-          "median_native_over_fallback": 0.8896497710659491
+          "ci95_high": 1.4122922731877088,
+          "ci95_low": 1.2950105929483837,
+          "median_native_over_fallback": 1.3546577690786925
         },
         "samples_ns_per_call": {
           "fallback": [
-            72867.0234375,
-            72993.0,
-            72838.05078125,
-            72057.78125,
-            73435.546875,
-            71181.4765625,
-            72448.56640625,
-            72829.58984375,
-            72943.359375
+            74341.30859375,
+            73388.5078125,
+            73485.1875,
+            74653.3203125,
+            72222.00390625,
+            74708.82421875,
+            74303.05859375,
+            76112.79296875,
+            75520.5078125
           ],
           "native": [
-            66221.6796875,
-            64161.45703125,
-            64790.203125,
-            65374.51171875,
-            63290.203125,
-            66083.66015625,
-            64398.76171875,
-            66051.59765625,
-            64894.04296875
+            100707.03125,
+            102911.46875,
+            103782.5625,
+            105455.75,
+            97960.9375,
+            96748.71875,
+            94729.1875,
+            102697.90625,
+            98230.46875
           ]
         },
         "schedule": [
@@ -551,17 +551,17 @@
           "correctness_digest": "db470cc562a3b1a3fe7c6e98f70e4a4d95d6c0a25a90423b306cec5f8352e3db",
           "loops": 1024,
           "matches_fallback_digest": true,
-          "median_ns_per_call": 16069.986328125,
+          "median_ns_per_call": 17083.5771484375,
           "samples_ns_per_call": [
-            16196.8583984375,
-            16419.4736328125,
-            15915.5673828125,
-            16200.48046875,
-            16570.150390625,
-            15813.8837890625,
-            16011.5966796875,
-            16034.6279296875,
-            16069.986328125
+            17083.5771484375,
+            16542.88671875,
+            16500.1220703125,
+            19984.130859375,
+            16498.7392578125,
+            21233.642578125,
+            18958.6181640625,
+            21222.2490234375,
+            16526.7744140625
           ]
         }
       },
@@ -571,22 +571,22 @@
       "numba": {
         "available": true,
         "classification": "context-only; JIT compile is not a Rextio target claim",
-        "cold_compile_and_call_ns": 39158750,
+        "cold_compile_and_call_ns": 41312625,
         "correctness_digest": "db470cc562a3b1a3fe7c6e98f70e4a4d95d6c0a25a90423b306cec5f8352e3db",
         "matches_fallback_digest": true,
-        "version": "0.62.1",
+        "version": "0.66.0",
         "warm_loops": 2048,
-        "warm_median_ns_per_call": 7763.93603515625,
+        "warm_median_ns_per_call": 8252.15673828125,
         "warm_samples_ns_per_call": [
-          7649.5771484375,
-          7796.48828125,
-          7705.4443359375,
-          7730.55029296875,
-          7766.39794921875,
-          7737.50830078125,
-          7794.4130859375,
-          7841.552734375,
-          7763.93603515625
+          8313.0087890625,
+          8353.43408203125,
+          8001.8310546875,
+          8252.15673828125,
+          8353.373046875,
+          8215.8203125,
+          8329.58984375,
+          8207.6826171875,
+          8244.20166015625
         ]
       },
       "product": {
@@ -599,36 +599,36 @@
           "native": 128
         },
         "median_ns_per_call": {
-          "fallback": 662190.125,
-          "native": 82327.8046875
+          "fallback": 666875.0,
+          "native": 109262.6953125
         },
         "paired_bootstrap": {
-          "ci95_high": 0.1282110569516215,
-          "ci95_low": 0.1210610322757458,
-          "median_native_over_fallback": 0.12565558523640638
+          "ci95_high": 0.16634518364518364,
+          "ci95_low": 0.15763726569821931,
+          "median_native_over_fallback": 0.16268976320866488
         },
         "samples_ns_per_call": {
           "fallback": [
-            634127.5625,
-            667330.75,
-            680052.0625,
-            664380.1875,
-            639674.5,
-            646877.5625,
-            648903.6875,
-            662190.125,
-            663023.4375
+            682414.0625,
+            666875.0,
+            673812.5,
+            781781.25,
+            656114.625,
+            658690.125,
+            647072.875,
+            676406.25,
+            662989.625
           ],
           "native": [
-            86048.171875,
-            83853.8359375,
-            82327.8046875,
-            83918.9453125,
-            82013.34375,
-            76625.0,
-            80369.140625,
-            81637.046875,
-            83838.21875
+            111079.1015625,
+            105124.3515625,
+            106194.65625,
+            119517.25,
+            109262.6953125,
+            103992.8359375,
+            105272.1328125,
+            112516.921875,
+            110036.1328125
           ]
         },
         "schedule": [
@@ -687,17 +687,17 @@
           "correctness_digest": "2ade727da236aa084155d28e3a0523b4fb12d768178d682edb06c479c6ccbc42",
           "loops": 128,
           "matches_fallback_digest": true,
-          "median_ns_per_call": 78456.7109375,
+          "median_ns_per_call": 83676.109375,
           "samples_ns_per_call": [
-            77357.421875,
-            76766.28125,
-            79299.8046875,
-            75972.3359375,
-            78456.7109375,
-            78747.390625,
-            81132.484375,
-            78216.46875,
-            84731.4453125
+            82394.8515625,
+            80505.5390625,
+            88063.4765625,
+            81994.140625,
+            83676.109375,
+            84090.8203125,
+            85735.3515625,
+            86271.8125,
+            82797.5234375
           ]
         }
       },
@@ -707,22 +707,22 @@
       "numba": {
         "available": true,
         "classification": "context-only; JIT compile is not a Rextio target claim",
-        "cold_compile_and_call_ns": 37668166,
+        "cold_compile_and_call_ns": 37623500,
         "correctness_digest": "2ade727da236aa084155d28e3a0523b4fb12d768178d682edb06c479c6ccbc42",
         "matches_fallback_digest": true,
-        "version": "0.62.1",
+        "version": "0.66.0",
         "warm_loops": 512,
-        "warm_median_ns_per_call": 20675.69921875,
+        "warm_median_ns_per_call": 21406.25,
         "warm_samples_ns_per_call": [
-          20829.021484375,
-          20232.91015625,
-          20645.671875,
-          20753.98828125,
-          20397.4609375,
-          20675.69921875,
-          20383.951171875,
-          20724.853515625,
-          20748.69921875
+          21172.689453125,
+          22158.69140625,
+          21406.25,
+          22560.953125,
+          21278.076171875,
+          21907.064453125,
+          20245.03515625,
+          21759.27734375,
+          20628.3359375
         ]
       },
       "product": {
@@ -735,36 +735,36 @@
           "native": 64
         },
         "median_ns_per_call": {
-          "fallback": 6662083.0,
-          "native": 215630.203125
+          "fallback": 6924520.5,
+          "native": 254839.1875
         },
         "paired_bootstrap": {
-          "ci95_high": 0.03307569726765624,
-          "ci95_low": 0.030728756205313082,
-          "median_native_over_fallback": 0.032171402043149964
+          "ci95_high": 0.03765384762414466,
+          "ci95_low": 0.036711420577785855,
+          "median_native_over_fallback": 0.037235794678596654
         },
         "samples_ns_per_call": {
           "fallback": [
-            6805375.0,
-            6738479.5,
-            6662083.0,
-            6731250.0,
-            6538395.5,
-            6610625.0,
-            6637666.5,
-            6613562.5,
-            6770354.0
+            6988250.0,
+            7043083.5,
+            6924520.5,
+            7108229.0,
+            7014104.0,
+            6778896.0,
+            6635937.5,
+            6604083.5,
+            6539750.0
           ],
           "native": [
-            220238.28125,
-            207065.09375,
-            215630.203125,
-            209611.984375,
-            217184.234375,
-            218651.03125,
-            201263.03125,
-            212767.578125,
-            216322.265625
+            262139.3125,
+            260093.75,
+            254208.984375,
+            256271.484375,
+            251263.03125,
+            254839.1875,
+            247094.40625,
+            258197.921875,
+            246246.75
           ]
         },
         "schedule": [
@@ -834,61 +834,63 @@
       100000
     ]
   },
-  "elapsed_ns": 22868780792,
-  "generated_at_unix_ns": 1784126775981793000,
+  "elapsed_ns": 22305462833,
+  "generated_at_unix_ns": 1784194717827249000,
   "null_call_floor": {
     "loops": 1048576,
-    "median_ns_per_call": 16.86537265777588,
+    "median_ns_per_call": 17.47175121307373,
     "samples_ns_per_call": [
-      16.43359661102295,
-      16.86537265777588,
-      16.750733375549316,
-      17.00619888305664,
-      17.112056732177734,
-      16.586342811584473,
-      17.024874687194824,
-      16.553203582763672,
-      17.009973526000977
+      17.305612564086914,
+      17.49396324157715,
+      17.02125835418701,
+      17.371813774108887,
+      17.14297103881836,
+      17.58122444152832,
+      17.47175121307373,
+      25.058507919311523,
+      17.632246017456055
     ]
   },
   "provenance": {
     "build_report": {
       "accepted_native_count": 1,
       "native_build_status": "built",
-      "path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/reports/build.json",
+      "path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-mgj8oh5e/.rextio/reports/build.json",
       "rejected_native_count": 0,
-      "sha256": "0596d94e2af8ed21b24945a56f3e92f6eae6385aecf53718b26f1b576ea463b1",
+      "sha256": "f72b339d426a974b0c1fb1eaf6fecb6058a30328e8dea4041f134c19c51c1620",
       "status": "built"
     },
     "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
     "check_report": {
-      "path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/reports/check.json",
+      "path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-mgj8oh5e/.rextio/reports/check.json",
       "routes": {
         "bench_app.kernels.series_map": "native-plugin:rextio-pandas"
       },
-      "sha256": "42890478616f96c333322bbe5ca5311cead01f0cbcb06418b354546be6e05d01"
+      "sha256": "e70ec1d8e66d9081d4ba501d2bed5f7f3ef92a695926472e4e882207cfefa20b"
     },
-    "check_report_sha256": "42890478616f96c333322bbe5ca5311cead01f0cbcb06418b354546be6e05d01",
+    "check_report_sha256": "e70ec1d8e66d9081d4ba501d2bed5f7f3ef92a695926472e4e882207cfefa20b",
     "claimed_native_routes": {
       "bench_app.kernels.series_map": "native-plugin:rextio-pandas"
     },
-    "compile_ns": 8307284416,
+    "compile_ns": 8486490833,
     "core_direct_url": {
-      "dir_info": {
-        "editable": true
-      },
-      "url": "file:///Volumes/Data/workspace/rextio/rextio-core-next"
+      "url": "https://github.com/rextio/rextio-core-next.git",
+      "vcs_info": {
+        "commit_id": "2bd1d1da0cf59e97d1659606bcb1ec12491e032c",
+        "requested_revision": "2bd1d1da0cf59e97d1659606bcb1ec12491e032c",
+        "vcs": "git"
+      }
     },
     "core_dirty": false,
-    "core_import_file": "/Volumes/Data/workspace/rextio/rextio-core-next/src/rextio/__init__.py",
-    "core_install_mode": "editable",
+    "core_import_file": "/Volumes/Data/workspace/rextio/rextio-pandas/.venv311/lib/python3.11/site-packages/rextio/__init__.py",
+    "core_install_mode": "vcs",
     "core_sha": "2bd1d1da0cf59e97d1659606bcb1ec12491e032c",
-    "generated_python_dir": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/generated/python",
+    "generated_python_dir": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-mgj8oh5e/.rextio/generated/python",
     "harness_manifest_sha256": "4ee25ad6314deabf4298bad4f02cd64d4fc1c08bd1793585af7d0938c9982163",
     "machine": "arm64",
     "native_artifact": {
-      "path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/generated/python/_rextio_native.cpython-311-darwin.so",
-      "sha256": "13d9666911e71e0a2ec77d32ca8c9e0d36699cdb817b7b79f641f1470781df7d"
+      "path": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-mgj8oh5e/.rextio/generated/python/_rextio_native.cpython-311-darwin.so",
+      "sha256": "00b6e6e95f0ddec030ba528192debba77df914d579f81b617c45ec1596a9103b"
     },
     "numpy": "2.3.5",
     "pandas": "2.3.3",
@@ -898,12 +900,12 @@
       "dir_info": {
         "editable": true
       },
-      "url": "file:///Volumes/Data/workspace/rextio/.octo/worktrees/WP-5"
+      "url": "file:///Volumes/Data/workspace/rextio/rextio-pandas"
     },
     "plugin_dirty": false,
-    "plugin_import_file": "/Volumes/Data/workspace/rextio/.octo/worktrees/WP-5/src/rextio_pandas/__init__.py",
+    "plugin_import_file": "/Volumes/Data/workspace/rextio/rextio-pandas/src/rextio_pandas/__init__.py",
     "plugin_install_mode": "editable",
-    "plugin_sha": "152ff9a0457ae4b4d83bfa2b21429cfee784a931",
+    "plugin_sha": "35d651b1684c6a48a6222e19635df853840aed8e",
     "processor": "arm",
     "python": "3.11.15 (main, Mar  3 2026, 00:52:57) [Clang 21.0.0 (clang-2100.0.123.102)]",
     "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
@@ -915,15 +917,15 @@
       }
     ],
     "timing_imports": {
-      "kernels": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/build/python/bench_app/kernels.py",
-      "native_module": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-3ckvf7y9/.rextio/build/python/_rextio_native.cpython-311-darwin.so",
+      "kernels": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-mgj8oh5e/.rextio/build/python/bench_app/kernels.py",
+      "native_module": "/private/var/folders/lc/fscpgs615pq83nyy1gkh1nn40000gn/T/rextio-pandas-bench-mgj8oh5e/.rextio/build/python/_rextio_native.cpython-311-darwin.so",
       "native_module_matches_build_artifact": true
     }
   },
   "schema": 4,
   "smoke": false,
   "sustained_break_even": {
-    "series.map": 1000
+    "series.map": 10000
   },
   "sustained_break_even_definition": "smallest measured Series size whose paired-bootstrap 95% CI is wholly below 1.0 and remains so at every larger measured Series size, with every required larger cell headline-eligible; not interpolated"
 }

@@ -163,6 +163,40 @@ def test_series_map_descriptor_can_be_shadowed_on_an_exact_instance() -> None:
     assert_series_equal(result, pd.Series([1.0], dtype="float64"), check_exact=True)
 
 
+def test_series_map_na_action_none_does_not_reach_map_infer_mask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pandas._libs.lib as lib
+
+    def unreachable(*args: object, **kwargs: object) -> object:
+        raise AssertionError("map_infer_mask is unreachable for na_action=None")
+
+    monkeypatch.setattr(lib, "map_infer_mask", unreachable)
+    source = pd.Series([1.0, 2.0], dtype="float64")
+
+    result = source.map(lambda value: value * 2.0, na_action=None)
+
+    assert_series_equal(result, pd.Series([2.0, 4.0], dtype="float64"), check_exact=True)
+
+
+def test_series_map_does_not_read_finalize_shadow_from_input_instance() -> None:
+    source = pd.Series([1.0, 2.0], dtype="float64")
+    calls = 0
+
+    def input_only_shadow(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("input instance __finalize__ must not be called")
+
+    source.__dict__["__finalize__"] = input_only_shadow
+    descriptor = pd.Series.__dict__["map"]
+
+    result = descriptor(source, lambda value: value * 2.0)
+
+    assert calls == 0
+    assert_series_equal(result, pd.Series([2.0, 4.0], dtype="float64"), check_exact=True)
+
+
 @pytest.mark.parametrize(
     ("kind", "frame", "row_dtype", "scalar_type"),
     [

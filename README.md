@@ -131,7 +131,7 @@ claim in the authoritative benchmark.
 ### Authoritative Series-only result (2026-07-16)
 
 The retained full run is schema 4 at plugin commit
-`c1ae2e734c48f795d4c4ca418ba4cf20f53b4b93` and core commit
+`35d651b1684c6a48a6222e19635df853840aed8e` and core commit
 `2bd1d1da0cf59e97d1659606bcb1ec12491e032c`, with nine counterbalanced paired
 samples per size, a 10 ms minimum calibration target, and seed `20260715`. All
 six cells passed the fail-closed headline-eligibility gates and had identical
@@ -140,12 +140,12 @@ accepted native route and zero rejected routes under plugin API 1.3.
 
 | Size | Native median (µs) | pandas fallback median (µs) | Paired native/fallback ratio (95% CI) | Result |
 | ---: | ---: | ---: | ---: | --- |
-| 1 | 84.939 | 9.324 | 9.074455 (8.828482–9.236807) | native 9.07× slower |
-| 10 | 85.634 | 10.019 | 8.503623 (8.345566–8.847237) | native 8.50× slower |
-| 100 | 86.281 | 15.655 | 5.520391 (5.311342–5.544713) | native 5.52× slower |
-| 1,000 | 86.051 | 73.879 | 1.165308 (1.154215–1.202724) | native 1.17× slower |
-| 10,000 | 101.898 | 654.865 | 0.155077 (0.154832–0.158761) | native 6.45× faster |
-| 100,000 | 244.310 | 6,729.854 | 0.035900 (0.035272–0.037772) | native 27.86× faster |
+| 1 | 93.938 | 9.610 | 9.802362 (9.589628–10.017574) | native 9.80× slower |
+| 10 | 96.817 | 10.773 | 9.183213 (7.893036–9.481407) | native 9.18× slower |
+| 100 | 92.650 | 15.694 | 5.914319 (5.702861–6.057157) | native 5.91× slower |
+| 1,000 | 100.707 | 74.341 | 1.354658 (1.295011–1.412292) | native 1.35× slower |
+| 10,000 | 109.263 | 666.875 | 0.162690 (0.157637–0.166345) | native 6.15× faster |
+| 100,000 | 254.839 | 6,924.520 | 0.037236 (0.036711–0.037654) | native 26.86× faster |
 
 The paired ratio is the median of the nine within-pair ratios, not the quotient
 of the separately rounded lane medians.
@@ -155,8 +155,8 @@ measured size whose paired 95% CI is wholly below 1.0 and remains so at every
 larger measured size. This is not an interpolated claim about the interval
 between 1,000 and 10,000, nor an extrapolation beyond 100,000. Complete
 per-public-call correctness validation supersedes the earlier 1,000-element
-threshold: native is still about 1.17× slower at 1,000, then about 6.45× faster
-at 10,000 and 27.86× faster at 100,000. The small-input losses are part of the
+threshold: native is still about 1.35× slower at 1,000, then about 6.15× faster
+at 10,000 and 26.86× faster at 100,000. The small-input losses are part of the
 result, not excluded from the headline evidence.
 Vectorized NumPy/pandas and warm Numba were faster than the native route at
 every measured size, but remain explicitly labeled context-only rather than

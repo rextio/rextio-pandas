@@ -1,4 +1,4 @@
-"""Machine-readable incubator rule records."""
+"""Machine-readable rule records for rextio-pandas."""
 
 from rextio.plugins.api import RuleRecord, RuleScope
 

@@ -1,6 +1,29 @@
 # Changelog
 
-## 0.0.1 (unreleased private incubator)
+## 0.1.0 (2026-07-17)
+
+First **public alpha** release of `rextio-pandas` (PyPI package `rextio-pandas`,
+repository [rextio/rextio-pandas](https://github.com/rextio/rextio-pandas)).
+
+### Public packaging
+
+- Bump the single version authority to `0.1.0` and publish-ready metadata:
+  Development Status Alpha classifiers, public project URLs, and no
+  `Private :: Do Not Upload` marker.
+- Declare truthful runtime support only: `requires-python = ">=3.11,<3.12"` and
+  the Python 3.11 classifier (no 3.12/3.13 classifiers). The generated native
+  Series.map runtime is CPython 3.11-only and rejects other minors.
+- Depend on public `rextio>=0.1.3,<0.2` (plugin API 1.3) instead of a private
+  exact-commit VCS pin on `rextio-core-next`.
+- Keep development pins `pandas==2.3.3` and `numpy==2.3.5`.
+- Benchmark harness and clean-env proof use the **installed** `rextio` package
+  by default; optional `REXTIO_CORE_ROOT` / `--find-links` overrides are
+  documented and never hard-code a machine-local absolute path.
+- Product boundary for this release: audited numeric `Series.map` is the sole
+  GO route; `DataFrame.apply(axis=1)` remains NO-GO / ordinary fallback.
+- Authoritative sustained measured break-even remains **10,000 rows** with the
+  recorded ratios and provenance from the 2026-07-16 schema-4 evidence (not
+  rewritten for this packaging release).
 
 ### Series.map authority closure (2026-07-16)
 

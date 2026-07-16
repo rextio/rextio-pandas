@@ -28,7 +28,12 @@ from benchmarks.cases import KERNEL_SOURCE, make_case
 
 
 def _tree_clean() -> bool:
-    for path in (ROOT, bench.CORE_ROOT):
+    """Plugin checkout must be clean; optional core root only when overridden."""
+    paths = [ROOT]
+    core_root = bench._optional_core_root()
+    if core_root is not None:
+        paths.append(core_root)
+    for path in paths:
         status = subprocess.run(
             ["git", "-C", str(path), "status", "--porcelain"],
             capture_output=True,
@@ -373,29 +378,45 @@ def test_smoke_default_output_is_a_temp_location() -> None:
 # --- C: fail-closed provenance validators -----------------------------------
 
 
-def test_core_direct_url_validator_rejects_wrong_commit() -> None:
-    with pytest.raises(RuntimeError):
-        bench._validate_core_direct_url(
-            {"url": bench.CORE_VCS_URL, "vcs_info": {"vcs": "git", "commit_id": "deadbeef"}},
-            Path("/tmp/rextio/__init__.py"),
-        )
+def test_core_provenance_accepts_index_install_without_direct_url() -> None:
+    assert bench._validate_core_provenance(None, Path("/tmp/rextio/__init__.py"), None) == "index"
 
 
-def test_core_direct_url_validator_rejects_credentialed_url() -> None:
+def test_core_provenance_accepts_vcs_with_commit() -> None:
+    mode = bench._validate_core_provenance(
+        {
+            "url": "https://github.com/rextio/rextio.git",
+            "vcs_info": {"vcs": "git", "commit_id": "abc123"},
+        },
+        Path("/tmp/rextio/__init__.py"),
+        None,
+    )
+    assert mode == "vcs"
+
+
+def test_core_provenance_rejects_credentialed_url() -> None:
     with pytest.raises(RuntimeError):
-        bench._validate_core_direct_url(
+        bench._validate_core_provenance(
             {
-                "url": "https://ghp_secret@github.com/rextio/rextio-core-next.git",
-                "vcs_info": {"vcs": "git", "commit_id": bench.CORE_SHA},
+                "url": "https://ghp_secret@github.com/rextio/rextio.git",
+                "vcs_info": {"vcs": "git", "commit_id": "abc123"},
             },
             Path("/tmp/rextio/__init__.py"),
+            None,
         )
+
+
+def test_core_version_range_gate() -> None:
+    assert bench._rextio_version_supported("0.1.3")
+    assert bench._rextio_version_supported("0.1.9")
+    assert not bench._rextio_version_supported("0.1.2")
+    assert not bench._rextio_version_supported("0.2.0")
 
 
 def test_plugin_direct_url_validator_accepts_wheel_mode() -> None:
     mode = bench._validate_plugin_direct_url(
         {
-            "url": "https://example/rextio_pandas-0.0.1-py3-none-any.whl",
+            "url": "https://example/rextio_pandas-0.1.0-py3-none-any.whl",
             "archive_info": {"hashes": {"sha256": "abc"}},
         },
         Path("/site-packages/rextio_pandas/__init__.py"),
@@ -413,13 +434,13 @@ def test_preflight_gathers_provenance_on_a_clean_tree() -> None:
         pytest.skip("preflight is fail-closed on a dirty worktree; run on a clean tree")
     provenance = _preflight()
     for key in (
-        "core_sha",
+        "core_version",
         "plugin_sha",
         "core_install_mode",
         "plugin_install_mode",
-        "core_direct_url",
         "plugin_direct_url",
         "plugin_api_version",
+        "required_rextio_spec",
         "selected_entry_points",
         "harness_manifest_sha256",
         "pandas",
@@ -429,6 +450,9 @@ def test_preflight_gathers_provenance_on_a_clean_tree() -> None:
     ):
         assert key in provenance
     assert provenance["plugin_api_version"] == "1.3"
+    assert provenance["required_rextio_spec"] == ">=0.1.3,<0.2"
+    assert bench._rextio_version_supported(provenance["core_version"])
     assert provenance["core_dirty"] is False and provenance["plugin_dirty"] is False
     assert provenance["pandas"] == "2.3.3"
     assert provenance["numpy"] == "2.3.5"
+    assert "/Volumes/Data/workspace" not in Path(bench.__file__).read_text(encoding="utf-8")

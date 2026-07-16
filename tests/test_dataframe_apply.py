@@ -644,15 +644,11 @@ def test_series_map_dynamic_authorities_are_frozen_and_checked_live() -> None:
         '        let builtins = py.import("builtins")?;\n'
         '        if !module_dict.get_item("len")?.is(&builtins.getattr("len")?)'
     ) not in source
-    map_array_validator = source.split(
-        "fn __rxtpd_validate_series_algorithms_map_array(", 1
-    )[1].split("\n}\n", 1)[0]
-    assert "__rxtpd_validate_authority_builtin(py, &bound, \"len\", error)?" in (
-        map_array_validator
-    )
-    assert 'let function_builtins = descriptor.getattr("__builtins__")?;' in (
-        map_array_validator
-    )
+    map_array_validator = source.split("fn __rxtpd_validate_series_algorithms_map_array(", 1)[
+        1
+    ].split("\n}\n", 1)[0]
+    assert '__rxtpd_validate_authority_builtin(py, &bound, "len", error)?' in (map_array_validator)
+    assert 'let function_builtins = descriptor.getattr("__builtins__")?;' in (map_array_validator)
     assert '"_cython_3_1_4"' in source
     assert '"cython_function_or_method"' in source
     assert "descriptor.is_exact_instance(&function_type)" in source
@@ -686,9 +682,10 @@ def test_every_loaded_authority_builtin_has_independent_rule_and_validator() -> 
         assert kind[0] in ("cfunction", "type", "exception"), name
         if kind[0] == "cfunction":
             # Covered by the shared PyCFunction structural arm.
-            assert f'"{name}"' in source.split(
-                "fn __rxtpd_validate_authority_builtin(", 1
-            )[1].split("\n}\n", 1)[0]
+            assert (
+                f'"{name}"'
+                in source.split("fn __rxtpd_validate_authority_builtin(", 1)[1].split("\n}\n", 1)[0]
+            )
         else:
             assert f'"{name}" =>' in source or f'"{name}" => {{' in source
             assert f"py.get_type::<{kind[1]}>()" in source
@@ -698,12 +695,8 @@ def test_every_loaded_authority_builtin_has_independent_rule_and_validator() -> 
     for key, spec in _AUTHORITY_GLOBALS.items():
         if not spec["builtins"]:
             continue
-        validator_source = source.split(f"fn __rxtpd_validate_{key}(", 1)[1].split(
-            "\n}\n", 1
-        )[0]
-        assert 'let function_builtins = descriptor.getattr("__builtins__")?;' in (
-            validator_source
-        )
+        validator_source = source.split(f"fn __rxtpd_validate_{key}(", 1)[1].split("\n}\n", 1)[0]
+        assert 'let function_builtins = descriptor.getattr("__builtins__")?;' in (validator_source)
         for name in spec["builtins"]:
             assert (
                 f'__rxtpd_validate_authority_builtin(py, &bound, "{name}", error)?'

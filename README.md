@@ -1,14 +1,39 @@
 # rextio-pandas
 
-`rextio-pandas` is a private, unpublished incubator for audited pandas
-`Series.map` lowering. It requires Rextio plugin API 1.3 from exact core commit
-`2bd1d1da0cf59e97d1659606bcb1ec12491e032c`, which lives only in the private
-`rextio/rextio-core-next` repository; the released `rextio==0.1.2` package
-shares that version number but implements API 1.2 and cannot load this plugin.
-The dependency is therefore a credential-free exact-commit VCS pin
-(`git+https://github.com/rextio/rextio-core-next.git@<commit>`), never a
-`rextio>=…` range that could select the published wheel. Development and
-evidence are pinned to `pandas==2.3.3` and `numpy==2.3.5`.
+`rextio-pandas` is a **public alpha** Rextio plugin that lowers an audited
+pandas `Series.map` slice to native Rust. It requires **CPython 3.11 only**
+(`requires-python = ">=3.11,<3.12"`) and Rextio plugin API 1.3 via the public
+package range `rextio>=0.1.3,<0.2`. Development and evidence are pinned to
+`pandas==2.3.3` and `numpy==2.3.5`. Other CPython minors (including 3.12 and
+3.13) are intentionally unsupported for this release.
+
+| Status | Meaning |
+| --- | --- |
+| **GO** | Supported numeric `Series.map` product route (this release) |
+| **NO-GO** | `DataFrame.apply(axis=1)` — ordinary Python fallback only |
+
+This is an honest alpha: the supported surface is narrow, small inputs can be
+slower than pure pandas, and `DataFrame.apply` is deliberately not a native
+product route.
+
+## Install
+
+```bash
+# Use a CPython 3.11 interpreter (3.12+ will be rejected by packaging metadata)
+python3.11 -m pip install rextio-pandas
+```
+
+For development:
+
+```bash
+python3.11 -m pip install -e '.[dev]'
+```
+
+Requires CPython 3.11 and a working Rust toolchain (`cargo` / `rustc`) when
+Rextio builds native extensions for accepted routes.
+
+Repository: [github.com/rextio/rextio-pandas](https://github.com/rextio/rextio-pandas).
+PyPI package: `rextio-pandas`.
 
 ## Series.map surface
 
@@ -96,7 +121,7 @@ The currently shared `boundary_helpers()` text can still place unused prototype
 frame definitions in a Series-generated crate; that is not a registered,
 claimed, or lowered DataFrame apply hot loop/product route.
 
-The repository retains clearly named private prototype helpers and pinned
+The repository retains clearly named prototype helpers and pinned
 characterization evidence for a homogeneous-float64 row loop. That experiment
 cannot be promoted safely: the frozen `FrameColumnApply` authority digest
 checks module/qualname, MRO names, `axis`, and selected property/method code,
@@ -127,6 +152,11 @@ bootstrap intervals, correctness digests, provenance, and a null-call floor.
 Vectorized NumPy/pandas and cold/warm Numba remain context-only lanes.
 DataFrame.apply has no product cell, context cell, break-even entry, or speedup
 claim in the authoritative benchmark.
+
+The harness uses the **installed** `rextio` package by default (public range
+`>=0.1.3,<0.2`, plugin API 1.3). For optional extra git provenance from a local
+core checkout, set `REXTIO_CORE_ROOT` to that directory; no machine-local path
+is hard-coded.
 
 ### Authoritative Series-only result (2026-07-16)
 
@@ -163,20 +193,14 @@ every measured size, but remain explicitly labeled context-only rather than
 Rextio target claims. See [the benchmark evidence](benchmarks/results/latest.json)
 and its retained `check.json`/`build.json` reports.
 
-## Install for development
+## Clean-environment dependency proof
 
 ```bash
-python -m pip install -e '.[dev]'
+python scripts/clean_env_proof.py
+# optional offline/pre-release: python scripts/clean_env_proof.py --find-links /path/to/wheels
 ```
 
-Resolving the install requires read access to the private
-`rextio/rextio-core-next` repository at the pinned commit; the credential-free
-URL means the fetching environment supplies its own git credentials (never a
-token embedded in `pyproject.toml`). The dependency-resolution provenance can
-be reproduced with `scripts/clean_env_proof.py`, which builds the wheel, installs
-it into a throwaway environment while resolving the exact VCS commit (no
-`--no-deps`), and asserts the installed core's `direct_url.json` URL/commit,
-`PLUGIN_API_VERSION == "1.3"`, the imported `rextio`/`rextio_pandas` paths, and
-that the selected `rextio.plugins` entry point is this wheel. This package is
-marked `Private :: Do Not Upload` and must not be published while the API 1.3
-core remains an incubator.
+The script requires a CPython 3.11 host (other minors fail immediately with a
+clear message). It builds this package's wheel, installs it into a throwaway
+environment with full dependency resolution, and asserts `rextio` is in range,
+plugin API 1.3, import paths, and the `rextio.plugins` entry point.

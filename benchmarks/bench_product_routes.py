@@ -39,9 +39,12 @@ from rextio.plugins.testing import build_certification_project
 from benchmarks.cases import KERNEL_SOURCE, BenchmarkCase, make_case
 
 ROOT = Path(__file__).resolve().parents[1]
-CORE_ROOT = Path("/Volumes/Data/workspace/rextio/rextio-core-next")
-CORE_SHA = "2bd1d1da0cf59e97d1659606bcb1ec12491e032c"
-CORE_VCS_URL = "https://github.com/rextio/rextio-core-next.git"
+# Optional local core checkout for extra provenance (git clean/SHA). When unset,
+# the harness uses the installed ``rextio`` distribution only — never a
+# machine-local absolute path.
+CORE_ROOT_ENV = "REXTIO_CORE_ROOT"
+REQUIRED_REXTIO_SPEC = ">=0.1.3,<0.2"
+REQUIRED_PLUGIN_API = "1.3"
 
 # Authoritative tracked output for a full run; smoke never touches these.
 RESULTS_DIR = ROOT / "benchmarks" / "results"
@@ -69,6 +72,34 @@ def _finite(value: object) -> bool:
 
 def _normalize_dist(name: str) -> str:
     return name.lower().replace("_", "-")
+
+
+def _parse_version(value: str) -> tuple[int, int, int]:
+    """Parse a simple ``major.minor.patch`` prefix (ignores pre/local suffixes)."""
+    core = value.split("+", 1)[0].split("-", 1)[0]
+    parts = core.split(".")
+    major = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
+    minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    return major, minor, patch
+
+
+def _rextio_version_supported(value: str) -> bool:
+    """True when *value* satisfies the public ``rextio>=0.1.3,<0.2`` floor."""
+    version = _parse_version(value)
+    return (0, 1, 3) <= version < (0, 2, 0)
+
+
+def _optional_core_root() -> Path | None:
+    """Return a documented optional core checkout override, if set."""
+    raw = os.environ.get(CORE_ROOT_ENV, "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser().resolve()
+
+
+def _distribution_version(distribution: str) -> str:
+    return importlib_metadata.version(distribution)
 
 
 def _distribution_direct_url(distribution: str) -> dict | None:
@@ -498,10 +529,11 @@ def _write_project(root: Path) -> None:
 def _preflight() -> dict[str, Any]:
     """Reject any invalid state before building or timing (survives ``python -O``).
 
-    Dirty trees, a wrong installed core/plugin, a mismatched direct-URL, a
-    foreign entry point, or off-pin pandas/NumPy all stop the run here so a stale
-    or different package can never be measured and mis-attributed to the pinned
-    checkout SHAs.
+    A wrong installed core/plugin version, foreign entry point, or off-pin
+    pandas/NumPy stops the run here so a stale package cannot be measured and
+    mis-attributed. Core is the installed ``rextio`` distribution by default;
+    set ``REXTIO_CORE_ROOT`` only when you also want a local checkout's git
+    clean/SHA recorded (optional override — never a hard-coded machine path).
     """
     import rextio
     import rextio_pandas
@@ -509,29 +541,44 @@ def _preflight() -> dict[str, Any]:
     from rextio_pandas.plugin import plugin as this_plugin
 
     _require(
-        PLUGIN_API_VERSION == "1.3",
-        f"core advertises plugin API {PLUGIN_API_VERSION!r}, need '1.3'",
+        PLUGIN_API_VERSION == REQUIRED_PLUGIN_API,
+        f"core advertises plugin API {PLUGIN_API_VERSION!r}, need {REQUIRED_PLUGIN_API!r}",
+    )
+    core_version = _distribution_version("rextio")
+    _require(
+        _rextio_version_supported(core_version),
+        f"rextio {core_version!r} is outside the supported range {REQUIRED_REXTIO_SPEC}",
     )
     _require(pd.__version__ == "2.3.3", f"pandas is {pd.__version__!r}, need '2.3.3'")
     _require(np.__version__ == "2.3.5", f"numpy is {np.__version__!r}, need '2.3.5'")
 
-    # Exact clean core and plugin worktrees, pinned once as the measured code.
-    _require(not _git_dirty(CORE_ROOT), "core-next worktree is dirty")
+    # Plugin worktree must be clean so measured code matches HEAD. Core is the
+    # installed package; optional local checkout is checked only when requested.
     _require(not _git_dirty(ROOT), "plugin worktree is dirty")
-    core_sha = _git_sha(CORE_ROOT)
     plugin_sha = _git_sha(ROOT)
-    _require(core_sha == CORE_SHA, f"core-next HEAD {core_sha} != required {CORE_SHA}")
+
+    core_root = _optional_core_root()
+    core_dirty = False
+    core_sha: str | None = None
+    if core_root is not None:
+        _require(core_root.is_dir(), f"{CORE_ROOT_ENV}={core_root} is not a directory")
+        _require(not _git_dirty(core_root), f"core worktree at {core_root} is dirty")
+        core_dirty = False
+        core_sha = _git_sha(core_root)
 
     core_file = Path(rextio.__file__).resolve()
     plugin_file = Path(rextio_pandas.__file__).resolve()
 
     core_direct_url = _distribution_direct_url("rextio")
-    _require(core_direct_url is not None, "core has no direct_url.json provenance")
-    core_mode = _validate_core_direct_url(core_direct_url, core_file)
+    core_mode = _validate_core_provenance(core_direct_url, core_file, core_root)
 
     plugin_direct_url = _distribution_direct_url("rextio-pandas")
     _require(plugin_direct_url is not None, "plugin has no direct_url.json provenance")
     plugin_mode = _validate_plugin_direct_url(plugin_direct_url, plugin_file)
+
+    # Prefer commit from VCS install metadata when no override checkout was set.
+    if core_sha is None and core_direct_url and "vcs_info" in core_direct_url:
+        core_sha = core_direct_url["vcs_info"].get("commit_id")
 
     entry_points = [
         {"name": ep.name, "value": ep.value, "dist": ep.dist.name if ep.dist else None}
@@ -557,8 +604,9 @@ def _preflight() -> dict[str, Any]:
     )
 
     return {
+        "core_version": core_version,
         "core_sha": core_sha,
-        "core_dirty": False,
+        "core_dirty": core_dirty,
         "plugin_sha": plugin_sha,
         "plugin_dirty": False,
         "core_install_mode": core_mode,
@@ -568,6 +616,7 @@ def _preflight() -> dict[str, Any]:
         "core_direct_url": core_direct_url,
         "plugin_direct_url": plugin_direct_url,
         "plugin_api_version": PLUGIN_API_VERSION,
+        "required_rextio_spec": REQUIRED_REXTIO_SPEC,
         "selected_entry_points": entry_points,
         "harness_manifest_sha256": _sha256_files(
             [Path(__file__).resolve(), ROOT / "benchmarks" / "cases.py"]
@@ -583,28 +632,50 @@ def _preflight() -> dict[str, Any]:
     }
 
 
-def _validate_core_direct_url(direct_url: dict, core_file: Path) -> str:
-    """Fail-closed check of the core direct URL for the active install mode."""
+def _validate_core_provenance(
+    direct_url: dict | None,
+    core_file: Path,
+    core_root: Path | None,
+) -> str:
+    """Fail-closed check of the installed core for the active install mode.
+
+    Public alpha uses the installed ``rextio`` package. Index installs may have
+    no ``direct_url.json``; editable/VCS/wheel installs are validated when
+    present. An optional ``REXTIO_CORE_ROOT`` checkout must match an editable
+    install when both are set.
+    """
+    if direct_url is None:
+        # Standard index install (no PEP 610 direct URL) — version was already
+        # checked against the public range.
+        return "index"
     if direct_url.get("dir_info", {}).get("editable"):
         checkout = _file_url_to_path(direct_url["url"])
         _require(
             core_file.is_relative_to(checkout),
             f"imported rextio {core_file} is not under editable checkout {checkout}",
         )
-        _require(
-            checkout.resolve() == CORE_ROOT.resolve(),
-            f"editable core checkout {checkout} != expected {CORE_ROOT}",
-        )
+        if core_root is not None:
+            _require(
+                checkout.resolve() == core_root.resolve(),
+                f"editable core checkout {checkout} != {CORE_ROOT_ENV}={core_root}",
+            )
         return "editable"
     if "vcs_info" in direct_url:
-        _require(direct_url["url"] == CORE_VCS_URL, f"core VCS URL {direct_url['url']!r}")
         _require("@" not in urlsplit(direct_url["url"]).netloc, "core URL leaks a credential")
-        _require(direct_url["vcs_info"].get("vcs") == "git", "core direct URL is not git")
         _require(
-            direct_url["vcs_info"].get("commit_id") == CORE_SHA,
-            f"core VCS commit {direct_url['vcs_info'].get('commit_id')!r} != {CORE_SHA}",
+            "ghp_" not in direct_url["url"] and "x-access-token" not in direct_url["url"],
+            "core URL leaks a credential",
         )
+        _require(direct_url["vcs_info"].get("vcs") == "git", "core direct URL is not git")
+        _require(bool(direct_url["vcs_info"].get("commit_id")), "core VCS commit is missing")
         return "vcs"
+    if "archive_info" in direct_url:
+        wheel = direct_url["url"].rsplit("/", 1)[-1]
+        _require(
+            "rextio-" in wheel or wheel.endswith(".whl") or wheel.endswith(".tar.gz"),
+            f"core archive does not look like a rextio distribution: {wheel}",
+        )
+        return "wheel"
     raise RuntimeError(f"benchmark preflight failed: unrecognized core provenance: {direct_url}")
 
 

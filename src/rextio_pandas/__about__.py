@@ -1,3 +1,3 @@
-"""Package metadata for the private rextio-pandas incubator."""
+"""Package metadata for rextio-pandas (single version authority)."""
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"

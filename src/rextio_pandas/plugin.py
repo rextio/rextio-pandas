@@ -1,4 +1,4 @@
-"""Rextio API 1.3 plugin facade for the private pandas incubator."""
+"""Rextio API 1.3 plugin facade for audited pandas Series.map lowering."""
 
 from __future__ import annotations
 
@@ -21,24 +21,26 @@ if TYPE_CHECKING:
     from rextio.plugins.models import RextioPlugin
 
 PLUGIN_ID = "rextio-pandas"
-CORE_COMMIT = "2bd1d1da0cf59e97d1659606bcb1ec12491e032c"
+# Public dependency floor: rextio>=0.1.3,<0.2 with plugin API 1.3.
+REQUIRED_PLUGIN_API = "1.3"
 
 
 def _require_api_13() -> None:
     from rextio.plugins.api import PLUGIN_API_VERSION
 
-    if PLUGIN_API_VERSION != "1.3":
+    if PLUGIN_API_VERSION != REQUIRED_PLUGIN_API:
         raise RuntimeError(
-            "rextio-pandas is a private plugin API 1.3 incubator built against "
-            f"Rextio core commit {CORE_COMMIT}; released rextio 0.1.2 is incompatible"
+            "rextio-pandas requires Rextio plugin API 1.3 "
+            f"(rextio>=0.1.3,<0.2); this environment advertises "
+            f"PLUGIN_API_VERSION={PLUGIN_API_VERSION!r}"
         )
 
 
 class RextioPandasPlugin:
-    """Lower only audited pandas operations under the integrated API 1.3 core."""
+    """Lower only audited pandas operations under plugin API 1.3."""
 
     plugin_id = PLUGIN_ID
-    api_version = "1.3"
+    api_version = REQUIRED_PLUGIN_API
 
     def to_rextio_plugin(self) -> RextioPlugin:
         """Return the metadata object registered by Rextio core."""
@@ -49,7 +51,7 @@ class RextioPandasPlugin:
 
         return RextioPlugin(
             id=PLUGIN_ID,
-            name=f"pandas Series.map incubator (rextio-pandas {__version__})",
+            name=f"pandas Series.map (rextio-pandas {__version__})",
             source_language="python",
             target_language="rust",
             packages=COVERAGE.packages,
@@ -63,7 +65,7 @@ class RextioPandasPlugin:
         return COVERAGE
 
     def describe(self, config: RextioConfig) -> tuple[RuleRecord, ...]:
-        """Return the deterministic machine-readable incubator records."""
+        """Return the deterministic machine-readable rule records."""
         _require_api_13()
         from rextio_pandas.rules import pandas_rule_records
 
@@ -109,4 +111,4 @@ def plugin() -> RextioPandasPlugin:
     return RextioPandasPlugin()
 
 
-__all__ = ["CORE_COMMIT", "PLUGIN_ID", "RextioPandasPlugin", "plugin"]
+__all__ = ["PLUGIN_ID", "REQUIRED_PLUGIN_API", "RextioPandasPlugin", "plugin"]

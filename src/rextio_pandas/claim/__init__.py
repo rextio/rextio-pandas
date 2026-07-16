@@ -1,4 +1,4 @@
-"""Claim router for the pandas incubator."""
+"""Claim router for rextio-pandas."""
 
 from rextio_pandas.claim.map_apply import claim
 

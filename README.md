@@ -47,11 +47,17 @@ authority graph. That graph covers `Series.map`, inherited
 `pandas._libs.lib.map_infer`, `Series._constructor`, inherited
 `NDFrame.__finalize__`, and `Series.to_numpy`. Plain Python members require the
 exact non-mutable CPython `PyFunction` type plus their frozen executable and
-global-binding authorities. The Cython callable requires its exact callable
-type and a frozen type/metatype structure, so coordinated replacement of the
-live type anchor is rejected. `Series.name` is `None` or `str`. Contract misses
-raise stable `TypeError` messages; they do not silently deopt. Strided arrays
-are copied by logical ndarray indexing into owned Rust storage.
+global-binding authorities. Every builtin name those frozen authorities load is
+validated independently against a structural/C-level rule (not by comparing two
+lookups from the live mutable `builtins` mapping); pure-Python mutation of
+`builtins.__dict__` before or after native-module import therefore fails closed
+with the stable Series-method `TypeError`. Malicious native extensions capable
+of fabricating CPython builtin objects remain out of scope. The Cython callable
+requires its exact callable type and a frozen type/metatype structure, so
+coordinated replacement of the live type anchor is rejected. `Series.name` is
+`None` or `str`. Contract misses raise stable `TypeError` messages; they do not
+silently deopt. Strided arrays are copied by logical ndarray indexing into
+owned Rust storage.
 
 Every public native call performs the complete authority validation once while
 extracting the input. A deterministic helper then runs the complete UDF in one

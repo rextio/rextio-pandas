@@ -15,6 +15,17 @@
   forged-callable attack and a canonical-code/globals/defaults replacement whose
   privately cached builtins changed fallback output while native execution
   remained unchanged.
+- Independently validate every Python builtin name consumed by that frozen
+  authority graph. Canonical `builtins.__dict__` container identity remains
+  necessary but not sufficient: each resolved binding is checked by a
+  structural/C-level authority (exact `builtin_function_or_method` plus fixed
+  module/name/qualname and canonical builtins-module `__self__` for C-function
+  names; PyO3 static type anchors for loaded types and exceptions) rather than
+  by comparing two live lookups from the mutable `builtins` mapping. Real-Cargo
+  regressions reject pure-Python `builtins.len` mutation both before and after
+  native-module import with the stable Series-method `TypeError`. Malicious
+  native extensions capable of fabricating CPython builtin objects remain out
+  of scope.
 - Bind the Cython `map_infer` authority to its exact callable type plus a frozen
   type/metatype structure, including immutable layout/MRO anchors, so replacing
   the callable and its live type name together does not pass validation.

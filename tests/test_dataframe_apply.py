@@ -36,7 +36,9 @@ from rextio_pandas.rust_snippets.map_apply import (
     _AUTHORITY_DEFAULTS,
     _AUTHORITY_GLOBALS,
     _AUTHORITY_OPTIMIZED_CODE_DIGESTS,
+    _BUILTIN_AUTHORITIES,
     _CYTHON_FUNCTION_TYPE_AUTHORITY,
+    _loaded_authority_builtin_names,
     _rust_string,
     boundary_helpers,
     compute_authority_class_digest,
@@ -628,6 +630,29 @@ def test_series_map_dynamic_authorities_are_frozen_and_checked_live() -> None:
             validator_source
         )
         assert '!descriptor.getattr("__builtins__")?.is(&builtins_dict)' in validator_source
+    # Canonical builtins-dict container identity is necessary but not sufficient:
+    # every consumed builtin name must be re-validated by an independent authority.
+    assert "fn __rxtpd_validate_authority_builtin(" in source
+    assert "is_exact_instance_of::<pyo3::types::PyCFunction>()" in source
+    assert 'bound.getattr("__self__")?.is(&builtins_module)' in source
+    assert "py.get_type::<pyo3::types::PyDict>()" in source
+    assert "py.get_type::<pyo3::exceptions::PyValueError>()" in source
+    # The old check compared two live builtins-dict lookups and skipped names
+    # absent from module globals — that accepted pure-Python builtins.len swaps.
+    assert (
+        'if module_dict.contains("len")? {\n'
+        '        let builtins = py.import("builtins")?;\n'
+        '        if !module_dict.get_item("len")?.is(&builtins.getattr("len")?)'
+    ) not in source
+    map_array_validator = source.split(
+        "fn __rxtpd_validate_series_algorithms_map_array(", 1
+    )[1].split("\n}\n", 1)[0]
+    assert "__rxtpd_validate_authority_builtin(py, &bound, \"len\", error)?" in (
+        map_array_validator
+    )
+    assert 'let function_builtins = descriptor.getattr("__builtins__")?;' in (
+        map_array_validator
+    )
     assert '"_cython_3_1_4"' in source
     assert '"cython_function_or_method"' in source
     assert "descriptor.is_exact_instance(&function_type)" in source
@@ -647,6 +672,48 @@ def test_series_map_dynamic_authorities_are_frozen_and_checked_live() -> None:
     assert "0 => __RXTPD_NDFRAME_FINALIZE_DIGEST" in source
     assert "1 => __RXTPD_NDFRAME_FINALIZE_OPTIMIZE_1_DIGEST" in source
     assert "_ => return Err(__rxtpd_type_error(error))" in source
+
+
+def test_every_loaded_authority_builtin_has_independent_rule_and_validator() -> None:
+    """Table-driven drift: every consumed builtin has a rule and emitted validator."""
+    loaded = _loaded_authority_builtin_names()
+    assert loaded == frozenset(_BUILTIN_AUTHORITIES)
+    assert loaded  # authorities currently load at least one builtin
+
+    source = boundary_helpers()
+    assert "fn __rxtpd_validate_authority_builtin(" in source
+    for name, kind in _BUILTIN_AUTHORITIES.items():
+        assert kind[0] in ("cfunction", "type", "exception"), name
+        if kind[0] == "cfunction":
+            # Covered by the shared PyCFunction structural arm.
+            assert f'"{name}"' in source.split(
+                "fn __rxtpd_validate_authority_builtin(", 1
+            )[1].split("\n}\n", 1)[0]
+        else:
+            assert f'"{name}" =>' in source or f'"{name}" => {{' in source
+            assert f"py.get_type::<{kind[1]}>()" in source
+
+    # Each authority that loads builtins must call the independent validator for
+    # every listed name (including ordinary builtins not shadowed in globals).
+    for key, spec in _AUTHORITY_GLOBALS.items():
+        if not spec["builtins"]:
+            continue
+        validator_source = source.split(f"fn __rxtpd_validate_{key}(", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        assert 'let function_builtins = descriptor.getattr("__builtins__")?;' in (
+            validator_source
+        )
+        for name in spec["builtins"]:
+            assert (
+                f'__rxtpd_validate_authority_builtin(py, &bound, "{name}", error)?'
+                in validator_source
+            ), (key, name)
+            # Must not skip names that are only resolved via __builtins__.
+            assert (
+                f'if module_dict.contains("{name}")? {{\n'
+                f'        let builtins = py.import("builtins")?;'
+            ) not in validator_source
 
 
 def test_cython_function_type_authority_matches_pinned_runtime() -> None:

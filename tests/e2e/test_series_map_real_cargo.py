@@ -701,6 +701,105 @@ else:
     assert completed.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_method"]]
 
 
+def test_canonical_builtins_len_mutation_after_import_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    """Mutating builtins.len after native import must fail closed.
+
+    Container identity of ``__builtins__ is builtins.__dict__`` still holds, but
+    fallback can diverge while native previously still accepted. Independent
+    structural authority on ``len`` rejects the pure-Python swap.
+    """
+    body = """
+import builtins
+import pandas as pd
+from pandas_app.kernels import map_f64
+
+series = pd.Series([1.0, 2.0], dtype="float64", name="values")
+descriptor = pd.Series.__dict__["map"]
+target_array = series._values
+original_len = builtins.len
+
+def selective_len(value):
+    if value is target_array:
+        return 0
+    return original_len(value)
+
+builtins.len = selective_len
+try:
+    fallback = descriptor(series, lambda value: value * 2.0).tolist()
+    try:
+        native = map_f64(series)
+    except Exception as exc:
+        print(type(exc).__name__)
+        print(str(exc))
+        print(repr(fallback))
+    else:
+        raise SystemExit(
+            f"canonical builtins.len mutation after import was accepted: "
+            f"fallback={fallback!r} native={native.tolist()!r}"
+        )
+finally:
+    builtins.len = original_len
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    lines = completed.stdout.splitlines()
+    assert lines[0] == "TypeError"
+    assert lines[1] == RUNTIME_ERRORS["series_method"]
+    # Fallback under the mutated builtin can differ from honest map semantics.
+    assert lines[2] == "[1.0, 2.0]"
+
+
+def test_canonical_builtins_len_mutation_before_import_is_rejected(
+    project: CertifiedProject,
+) -> None:
+    """Mutating builtins.len before native import must also fail closed.
+
+    Prevents any import-time snapshot of ``len`` from bypassing call-time
+    structural authority validation.
+    """
+    body = """
+import builtins
+import pandas as pd
+
+series = pd.Series([1.0, 2.0], dtype="float64", name="values")
+descriptor = pd.Series.__dict__["map"]
+target_array = series._values
+original_len = builtins.len
+
+def selective_len(value):
+    if value is target_array:
+        return 0
+    return original_len(value)
+
+builtins.len = selective_len
+try:
+    fallback = descriptor(series, lambda value: value * 2.0).tolist()
+    from pandas_app.kernels import map_f64
+
+    try:
+        native = map_f64(series)
+    except Exception as exc:
+        print(type(exc).__name__)
+        print(str(exc))
+        print(repr(fallback))
+    else:
+        raise SystemExit(
+            f"canonical builtins.len mutation before import was accepted: "
+            f"fallback={fallback!r} native={native.tolist()!r}"
+        )
+finally:
+    builtins.len = original_len
+"""
+    completed = _run_fresh(project, "native", body)
+    assert completed.returncode == 0, completed.stderr
+    lines = completed.stdout.splitlines()
+    assert lines[0] == "TypeError"
+    assert lines[1] == RUNTIME_ERRORS["series_method"]
+    assert lines[2] == "[1.0, 2.0]"
+
+
 def test_mutable_function_type_anchor_cannot_accept_forged_callable(
     project: CertifiedProject,
 ) -> None:

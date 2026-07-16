@@ -259,6 +259,37 @@ _AUTHORITY_GLOBALS: dict[str, dict[str, tuple]] = {
         "import_from": (),
     },
 }
+# Independent authority rules for every Python builtin name listed under
+# ``_AUTHORITY_GLOBALS[*]["builtins"]``. Validation never compares two lookups
+# from the live mutable ``builtins.__dict__`` (that only proves container
+# identity of the mapping, not of each resolved name).
+#
+# Anchors by kind:
+# - ``cfunction``: exact ``builtin_function_or_method`` (PyO3 ``PyCFunction``)
+#   plus fixed ``__module__`` / ``__name__`` / ``__qualname__`` and canonical
+#   module ``__self__`` (the builtins *module object*, not a dict entry).
+# - ``type`` / ``exception``: CPython C-level type identity via PyO3's static
+#   ``type_object`` / ``get_type`` anchors (not ``builtins.getattr``).
+#
+# Residual threat boundary: a malicious native extension capable of fabricating
+# CPython objects (forged ``builtin_function_or_method`` instances or swapped
+# heap type objects) remains out of scope. Ordinary pure-Python mutation of
+# ``builtins.__dict__`` is rejected both before and after native-module import.
+_BUILTIN_AUTHORITIES: dict[str, tuple] = {
+    "len": ("cfunction",),
+    "isinstance": ("cfunction",),
+    "hasattr": ("cfunction",),
+    "getattr": ("cfunction",),
+    "all": ("cfunction",),
+    "next": ("cfunction",),
+    "iter": ("cfunction",),
+    "dict": ("type", "pyo3::types::PyDict"),
+    "set": ("type", "pyo3::types::PySet"),
+    "str": ("type", "pyo3::types::PyString"),
+    "object": ("type", "pyo3::types::PyAny"),
+    "ValueError": ("exception", "pyo3::exceptions::PyValueError"),
+    "TypeError": ("exception", "pyo3::exceptions::PyTypeError"),
+}
 _NO_DEFAULT_MODULE = "pandas._libs.lib"
 _NO_DEFAULT_ATTR = "no_default"
 
@@ -677,16 +708,107 @@ def _default_item_rs(index: int, spec: tuple) -> str:
     )
 
 
+def _loaded_authority_builtin_names() -> frozenset[str]:
+    """Every builtin name actually loaded by a supported frozen authority."""
+    names: set[str] = set()
+    for spec in _AUTHORITY_GLOBALS.values():
+        names.update(spec["builtins"])
+    return frozenset(names)
+
+
+def _builtin_authority_validators_rs() -> str:
+    """Shared Rust validators for independent builtin authorities.
+
+    Resolves nothing from the live mutable builtins mapping for comparison.
+    Callers supply the already-resolved binding (module globals first, else the
+    function's ``__builtins__`` mapping — the same order as ``LOAD_GLOBAL``).
+    """
+    cfunction_names = sorted(
+        name for name, kind in _BUILTIN_AUTHORITIES.items() if kind[0] == "cfunction"
+    )
+    type_arms: list[str] = []
+    for name, kind in sorted(_BUILTIN_AUTHORITIES.items()):
+        if kind[0] not in ("type", "exception"):
+            continue
+        type_arms.append(
+            "        "
+            + _rust_string(name)
+            + " => {\n"
+            "            if !bound.is(&py.get_type::<"
+            + kind[1]
+            + ">()) {\n"
+            "                return Err(__rxtpd_type_error(error));\n"
+            "            }\n"
+            "            Ok(())\n"
+            "        }\n"
+        )
+    cfunction_match = " | ".join(_rust_string(n) for n in cfunction_names)
+    return (
+        "fn __rxtpd_validate_authority_builtin(\n"
+        "    py: pyo3::Python<'_>,\n"
+        "    bound: &pyo3::Bound<'_, pyo3::PyAny>,\n"
+        "    name: &str,\n"
+        "    error: &'static str,\n"
+        ") -> pyo3::PyResult<()> {\n"
+        "    use pyo3::types::PyAnyMethods;\n"
+        "    match name {\n"
+        "        "
+        + cfunction_match
+        + " => {\n"
+        "            // Builtin functions cannot be forged with ordinary Python.\n"
+        "            // Require exact C-level builtin-function type plus fixed\n"
+        "            // module/name/qualname and the canonical builtins module as\n"
+        "            // ``__self__``. Do not compare two live builtins-dict lookups.\n"
+        "            if !bound.is_exact_instance_of::<pyo3::types::PyCFunction>() {\n"
+        "                return Err(__rxtpd_type_error(error));\n"
+        "            }\n"
+        '            if bound.getattr("__module__")?.extract::<String>()? != "builtins" {\n'
+        "                return Err(__rxtpd_type_error(error));\n"
+        "            }\n"
+        '            if bound.getattr("__name__")?.extract::<String>()? != name {\n'
+        "                return Err(__rxtpd_type_error(error));\n"
+        "            }\n"
+        '            if bound.getattr("__qualname__")?.extract::<String>()? != name {\n'
+        "                return Err(__rxtpd_type_error(error));\n"
+        "            }\n"
+        '            let builtins_module = py.import("builtins")?;\n'
+        '            if !bound.getattr("__self__")?.is(&builtins_module) {\n'
+        "                return Err(__rxtpd_type_error(error));\n"
+        "            }\n"
+        "            Ok(())\n"
+        "        }\n"
+        + "".join(type_arms)
+        + "        _ => Err(__rxtpd_type_error(error)),\n"
+        "    }\n"
+        "}\n"
+    )
+
+
 def _globals_rs(spec: dict) -> str:
     blocks: list[str] = []
+    if spec["builtins"]:
+        # Resolve each consumed builtin the way LOAD_GLOBAL does: the function's
+        # module globals first, then its ``__builtins__`` mapping. Validate every
+        # name (not only those shadowed in module globals) against an independent
+        # structural/C-level authority — never by comparing two lookups from the
+        # live mutable builtins dictionary.
+        blocks.append(
+            '    let function_builtins = descriptor.getattr("__builtins__")?;\n'
+        )
     for name in spec["builtins"]:
+        if name not in _BUILTIN_AUTHORITIES:
+            raise ValueError(f"no independent authority rule for builtin {name!r}")
         rn = _rust_string(name)
         blocks.append(
-            "    if module_dict.contains(" + rn + ")? {\n"
-            '        let builtins = py.import("builtins")?;\n'
-            "        if !module_dict.get_item(" + rn + ")?.is(&builtins.getattr(" + rn + ")?) {\n"
-            "            return Err(__rxtpd_type_error(error));\n"
-            "        }\n"
+            "    {\n"
+            "        let bound = if module_dict.contains(" + rn + ")? {\n"
+            "            module_dict.get_item(" + rn + ")"
+            ".map_err(|_| __rxtpd_type_error(error))?\n"
+            "        } else {\n"
+            "            function_builtins.get_item(" + rn + ")"
+            ".map_err(|_| __rxtpd_type_error(error))?\n"
+            "        };\n"
+            "        __rxtpd_validate_authority_builtin(py, &bound, " + rn + ", error)?;\n"
             "    }\n"
         )
     for name, modname in spec["modules"]:
@@ -1162,6 +1284,7 @@ def boundary_helpers() -> str:
     frame_column_apply_class_digest = _rust_string(_APPLY_CLASS_DIGESTS["frame_column_apply"])
     frame_row_apply_class_digest = _rust_string(_APPLY_CLASS_DIGESTS["frame_row_apply"])
     identity_functions = _RUST_IDENTITY_FUNCTIONS
+    builtin_authority_validators = _builtin_authority_validators_rs()
     method_validators = _rust_method_validators(error)
     module_authority_validators = _apply_module_authority_validators(error)
     version = _rust_string(PINNED_PANDAS_VERSION)
@@ -1204,6 +1327,8 @@ const __RXTPD_FRAME_COLUMN_APPLY_CLASS_DIGEST: &str = {frame_column_apply_class_
 const __RXTPD_FRAME_ROW_APPLY_CLASS_DIGEST: &str = {frame_row_apply_class_digest};
 
 {identity_functions}
+
+{builtin_authority_validators}
 
 {method_validators}
 

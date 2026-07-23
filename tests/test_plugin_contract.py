@@ -9,6 +9,7 @@ import tomllib
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+import pytest
 import rextio
 
 from rextio.plugins.api import PLUGIN_API_VERSION, BoundaryConversion
@@ -16,7 +17,11 @@ from rextio.plugins.api import PLUGIN_API_VERSION, BoundaryConversion
 import rextio_pandas
 import rextio_pandas.rust_snippets as rust_snippets
 from rextio_pandas import __version__ as package_version
-from rextio_pandas.plugin import REQUIRED_PLUGIN_API, RextioPandasPlugin
+from rextio_pandas.plugin import (
+    REQUIRED_PLUGIN_API,
+    RextioPandasPlugin,
+    is_compatible_plugin_api,
+)
 from rextio_pandas.plugin_types import PLUGIN_TYPES
 from rextio_pandas.rust_snippets.map_apply import boundary_helpers
 
@@ -79,8 +84,8 @@ def test_public_alpha_version_and_dependencies() -> None:
     dependencies = project["dependencies"]
     classifiers = project.get("classifiers", [])
 
-    assert package_version == "0.1.0"
-    assert PLUGIN_API_VERSION == REQUIRED_PLUGIN_API == "1.3"
+    assert package_version == "0.1.1"
+    assert REQUIRED_PLUGIN_API == "1.3"
     assert RextioPandasPlugin.api_version == "1.3"
     assert project["requires-python"] == ">=3.11,<3.12"
     assert dependencies[0] == f"rextio{REQUIRED_REXTIO_SPEC}"
@@ -99,11 +104,27 @@ def test_public_alpha_version_and_dependencies() -> None:
     assert "incubator" not in project["description"].lower()
 
 
-def test_installed_core_is_public_api_13_range() -> None:
-    # The resolved core must advertise plugin API 1.3 and a package version in
+@pytest.mark.parametrize(
+    ("host_api", "expected"),
+    [
+        ("1.3", True),
+        ("1.4", True),
+        ("1.2", False),
+        ("2.0", False),
+        ("invalid", False),
+    ],
+)
+def test_plugin_api_compatibility_requires_same_major_and_minimum_minor(
+    host_api: str, expected: bool
+) -> None:
+    assert is_compatible_plugin_api(host_api) is expected
+
+
+def test_installed_core_is_public_compatible_api_range() -> None:
+    # The resolved core must advertise a compatible plugin API and a package version in
     # the public rextio>=0.1.3,<0.2 range. Index installs may lack direct_url;
     # editable/VCS/wheel modes are accepted when present and credential-free.
-    assert PLUGIN_API_VERSION == "1.3"
+    assert is_compatible_plugin_api(PLUGIN_API_VERSION)
     core_version = importlib_metadata.version("rextio")
     assert _rextio_version_supported(core_version), core_version
     core_file = Path(rextio.__file__).resolve()
@@ -191,6 +212,7 @@ def test_clean_env_proof_script_is_public_range_and_no_deps_free() -> None:
     assert '"--no-deps"' not in text
     assert "'--no-deps'" not in text
     assert "_require_supported_interpreter" in text
+    assert "is_compatible_plugin_api" in text
     assert "requires CPython 3.11" in text
 
 
@@ -220,6 +242,7 @@ def test_loader_registers_only_supported_series_types_and_exact_crate() -> None:
     registry = pandas_registry()
 
     assert registry.active[0].api_version == "1.3"
+    assert getattr(registry.active[0], "artifact_capability_declared", False) is False
     assert registry.active[0].lowering_provided is True
     assert registry.active[0].packages == ("pandas",)
     assert tuple(binding.plugin_type for binding in registry.types) == PLUGIN_TYPES
@@ -237,6 +260,10 @@ def test_loader_registers_only_supported_series_types_and_exact_crate() -> None:
     assert [
         (entry.dependency.name, entry.dependency.version) for entry in registry.crate_dependencies
     ] == [("numpy", "=0.29.0")]
+
+
+def test_provider_does_not_declare_standalone_artifact_capability() -> None:
+    assert not hasattr(RextioPandasPlugin, "artifact_capability")
 
 
 def test_public_authority_exposes_series_map_and_apply_no_go_only() -> None:

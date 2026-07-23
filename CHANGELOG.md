@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Restore compatibility with Core 0.1.5 / plugin API 1.4 while continuing to
+  declare provider API 1.3 and require `rextio>=0.1.3,<0.2`.
+- Defer provider compatibility enforcement to the Core loader. The benchmark
+  and clean-environment proof now independently fail closed unless Core has
+  the same API major and a minor of at least 3.
+- Reject standalone/non-PyO3 lowering explicitly. This provider does not
+  declare an artifact capability.
+
 ## 0.1.0 (2026-07-17)
 
 First **public alpha** release of `rextio-pandas` (PyPI package `rextio-pandas`,

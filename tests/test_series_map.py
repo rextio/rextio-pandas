@@ -242,6 +242,36 @@ def test_lower_is_deterministic_and_contains_pure_detached_hot_loop() -> None:
     assert "if " in hot
 
 
+def test_lower_keeps_api_13_contexts_without_a_backend_field_on_pyo3() -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    claimed = ClaimSite(
+        **{
+            **site(SERIES_F64, callable_meta).__dict__,
+            "rule_id": SERIES_MAP_RULE,
+            "result_type": SERIES_F64,
+        }
+    )
+
+    lowered = PLUGIN.lower(claimed, SimpleNamespace(receiver="series"))
+
+    assert lowered.rust.endswith("(py, &series)?")
+
+
+@pytest.mark.parametrize("backend", ["standalone-rust", "rust-crate", "host-executable"])
+def test_lower_rejects_non_pyo3_backends(backend: str) -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    claimed = ClaimSite(
+        **{
+            **site(SERIES_F64, callable_meta).__dict__,
+            "rule_id": SERIES_MAP_RULE,
+            "result_type": SERIES_F64,
+        }
+    )
+
+    with pytest.raises(ValueError, match="PyO3 host-extension lowering"):
+        PLUGIN.lower(claimed, SimpleNamespace(receiver="series", backend=backend))
+
+
 def test_series_map_materializer_reuses_extraction_time_class_validation() -> None:
     source = boundary_helpers()
     materializer = source[

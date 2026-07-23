@@ -538,11 +538,15 @@ def _preflight() -> dict[str, Any]:
     import rextio
     import rextio_pandas
     from rextio.plugins.api import PLUGIN_API_VERSION
-    from rextio_pandas.plugin import plugin as this_plugin
+    from rextio_pandas.plugin import (
+        is_compatible_plugin_api,
+        plugin as this_plugin,
+    )
 
     _require(
-        PLUGIN_API_VERSION == REQUIRED_PLUGIN_API,
-        f"core advertises plugin API {PLUGIN_API_VERSION!r}, need {REQUIRED_PLUGIN_API!r}",
+        is_compatible_plugin_api(PLUGIN_API_VERSION),
+        "core advertises incompatible plugin API "
+        f"{PLUGIN_API_VERSION!r}; need major 1 and minor >= 3",
     )
     core_version = _distribution_version("rextio")
     _require(

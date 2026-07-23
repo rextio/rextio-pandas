@@ -16,7 +16,8 @@ python -m benchmarks.bench_product_routes --smoke
 A **fail-closed** preflight (no Python `assert`, so it survives `python -O`)
 runs before any build or timing and *rejects* — not merely records — an invalid
 state. It requires a clean plugin Git worktree; an installed `rextio` package
-satisfying `>=0.1.3,<0.2` with `PLUGIN_API_VERSION == "1.3"`; pandas 2.3.3 /
+satisfying `>=0.1.3,<0.2` with a compatible plugin API (major 1, minor at
+least 3); pandas 2.3.3 /
 NumPy 2.3.5; that the imported `rextio_pandas` resolves under this checkout (or
 a built wheel with hash); and that the selected `rextio.plugins` entry point
 loads this exact plugin object. Core provenance is taken from the **installed**

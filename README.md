@@ -2,8 +2,9 @@
 
 `rextio-pandas` is a **public alpha** Rextio plugin that lowers an audited
 pandas `Series.map` slice to native Rust. It requires **CPython 3.11 only**
-(`requires-python = ">=3.11,<3.12"`) and Rextio plugin API 1.3 via the public
-package range `rextio>=0.1.3,<0.2`. Development and evidence are pinned to
+(`requires-python = ">=3.11,<3.12"`) and declares Rextio provider API 1.3 via
+the public package range `rextio>=0.1.3,<0.2`. It is compatible with Core API
+1.3 and later 1.x minors (including Core 0.1.5 / API 1.4). Development and evidence are pinned to
 `pandas==2.3.3` and `numpy==2.3.5`. Other CPython minors (including 3.12 and
 3.13) are intentionally unsupported for this release.
 
@@ -154,7 +155,7 @@ DataFrame.apply has no product cell, context cell, break-even entry, or speedup
 claim in the authoritative benchmark.
 
 The harness uses the **installed** `rextio` package by default (public range
-`>=0.1.3,<0.2`, plugin API 1.3). For optional extra git provenance from a local
+`>=0.1.3,<0.2`, provider API 1.3 with compatible Core API 1.3+). For optional extra git provenance from a local
 core checkout, set `REXTIO_CORE_ROOT` to that directory; no machine-local path
 is hard-coded.
 
@@ -203,4 +204,5 @@ python scripts/clean_env_proof.py
 The script requires a CPython 3.11 host (other minors fail immediately with a
 clear message). It builds this package's wheel, installs it into a throwaway
 environment with full dependency resolution, and asserts `rextio` is in range,
-plugin API 1.3, import paths, and the `rextio.plugins` entry point.
+compatible Core plugin API (major 1, minor at least 3), import paths, and the
+`rextio.plugins` entry point.

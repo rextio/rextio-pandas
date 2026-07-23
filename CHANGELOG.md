@@ -4,9 +4,10 @@
 
 - Restore compatibility with Core 0.1.5 / plugin API 1.4 while continuing to
   declare provider API 1.3 and require `rextio>=0.1.3,<0.2`.
-- Defer provider compatibility enforcement to the Core loader. The benchmark
-  and clean-environment proof now independently fail closed unless Core has
-  the same API major and a minor of at least 3.
+- Keep the current Core loader as the primary compatibility authority, with
+  the same fail-closed guard on every provider entry method so older loaders
+  that checked only the major cannot admit Core API 1.2. The benchmark and
+  clean-environment proof require the same API major and a minor of at least 3.
 - Reject standalone/non-PyO3 lowering explicitly. This provider does not
   declare an artifact capability.
 - Keep the NO-GO `DataFrame.apply` warning characterization bounded to the two

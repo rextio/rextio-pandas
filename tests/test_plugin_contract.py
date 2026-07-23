@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 import rextio
+import rextio.plugins.api as plugin_api
 
 from rextio.plugins.api import PLUGIN_API_VERSION, BoundaryConversion
 
@@ -118,6 +119,47 @@ def test_plugin_api_compatibility_requires_same_major_and_minimum_minor(
     host_api: str, expected: bool
 ) -> None:
     assert is_compatible_plugin_api(host_api) is expected
+
+
+@pytest.mark.parametrize("host_api", ["1.3", "1.4"])
+def test_provider_entry_methods_allow_supported_host_api(
+    monkeypatch: pytest.MonkeyPatch, host_api: str
+) -> None:
+    monkeypatch.setattr(plugin_api, "PLUGIN_API_VERSION", host_api)
+
+    assert RextioPandasPlugin().covers().symbols == ("pandas.Series.map",)
+
+
+@pytest.mark.parametrize("host_api", ["1.2", "2.0", "malformed"])
+@pytest.mark.parametrize(
+    "entry_method",
+    [
+        "to_rextio_plugin",
+        "covers",
+        "describe",
+        "type_vocabulary",
+        "claim",
+        "lower",
+        "crate_dependencies",
+    ],
+)
+def test_every_provider_entry_method_rejects_incompatible_host_api_early(
+    monkeypatch: pytest.MonkeyPatch, host_api: str, entry_method: str
+) -> None:
+    monkeypatch.setattr(plugin_api, "PLUGIN_API_VERSION", host_api)
+    provider = RextioPandasPlugin()
+    calls = {
+        "to_rextio_plugin": lambda: provider.to_rextio_plugin(),
+        "covers": lambda: provider.covers(),
+        "describe": lambda: provider.describe(object()),  # type: ignore[arg-type]
+        "type_vocabulary": lambda: provider.type_vocabulary(),
+        "claim": lambda: provider.claim(object(), object()),  # type: ignore[arg-type]
+        "lower": lambda: provider.lower(object(), object()),  # type: ignore[arg-type]
+        "crate_dependencies": lambda: provider.crate_dependencies(),
+    }
+
+    with pytest.raises(RuntimeError, match="requires a compatible Rextio plugin API"):
+        calls[entry_method]()
 
 
 def test_installed_core_is_public_compatible_api_range() -> None:

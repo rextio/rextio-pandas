@@ -19,6 +19,7 @@ from rextio_pandas.diagnostics import (
     DIAGNOSTIC_BODY,
     DIAGNOSTIC_SHAPE,
     DIAGNOSTIC_SIGNATURE,
+    SERIES_BOOL,
     SERIES_F64,
     SERIES_I64,
     SERIES_TYPES,
@@ -53,8 +54,8 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
 
     if expr.kind == "literal":
         literal = expr.literal
-        if literal is None or literal.kind not in {"int", "float"}:
-            return _fail("only finite int/float literals are audited")
+        if literal is None or literal.kind not in {"int", "float", "bool"}:
+            return _fail("only finite int/float and bool literals are audited")
         literal_type = literal.kind
         if expr.result_type != literal_type:
             return _fail("literal result type is inconsistent")
@@ -67,8 +68,10 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
     child_types = tuple(child.result_type for child in children)
 
     if expr.kind == "unary":
+        if expr.op == "not" and child_types == ("bool",) and expr.result_type == "bool":
+            return BodyAudit(True, "bool")
         if input_type != "float" or expr.op != "-" or child_types != ("float",):
-            return _fail("only unary negation of float64 values is audited")
+            return _fail("only unary negation of float64 values and boolean not are audited")
         if expr.result_type != "float":
             return _fail("unary result type is inconsistent")
         return BodyAudit(True, "float")
@@ -103,8 +106,8 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
     if expr.kind == "cond":
         if len(child_types) != 3 or child_types[0] != "bool":
             return _fail("conditional expressions require a boolean test")
-        if child_types[1] != child_types[2] or child_types[1] not in {"int", "float"}:
-            return _fail("conditional branches must have one identical numeric type")
+        if child_types[1] != child_types[2] or child_types[1] not in {"int", "float", "bool"}:
+            return _fail("conditional branches must have one identical scalar type")
         if expr.result_type != child_types[1]:
             return _fail("conditional result type is inconsistent")
         return BodyAudit(True, child_types[1])
@@ -122,7 +125,7 @@ def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     param = meta.params[0]
     if param.param_type != input_type:
         return _fail(f"the mapper parameter must be annotated {input_type}")
-    if meta.return_type not in ({"float"} if input_type == "float" else {"int", "float"}):
+    if meta.return_type not in ({"float", "bool"} if input_type == "float" else {"int", "float", "bool"}):
         return _fail("the mapper return annotation is outside the supported scalar matrix")
     if meta.runtime_semantics:
         return _fail("runtime-semantics callables cannot run in the pandas native loop")
@@ -264,7 +267,19 @@ def _claim_series_map(site: ClaimSite) -> ClaimResult:
             audit.reason,
             "Use one statically resolved scalar UDF whose complete body is inside the documented audited subset.",
         )
-    result_key = SERIES_F64 if audit.result_type == "float" else SERIES_I64
+    result_type = audit.result_type
+    if result_type not in {"float", "int", "bool"}:
+        return reject(
+            site,
+            DIAGNOSTIC_BODY,
+            "the audited mapper has no supported scalar result type",
+            "Use a mapper whose complete body returns float, int, or bool in the documented subset.",
+        )
+    result_key = {
+        "float": SERIES_F64,
+        "int": SERIES_I64,
+        "bool": SERIES_BOOL,
+    }[result_type]
     return Claimed(rule_id=SERIES_MAP_RULE, result_type=result_key)
 
 

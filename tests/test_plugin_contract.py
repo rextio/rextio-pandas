@@ -85,7 +85,7 @@ def test_public_alpha_version_and_dependencies() -> None:
     dependencies = project["dependencies"]
     classifiers = project.get("classifiers", [])
 
-    assert package_version == "0.1.1"
+    assert package_version == "0.1.2"
     assert REQUIRED_PLUGIN_API == "1.3"
     assert RextioPandasPlugin.api_version == "1.3"
     assert project["requires-python"] == ">=3.11,<3.12"
@@ -288,10 +288,11 @@ def test_loader_registers_only_supported_series_types_and_exact_crate() -> None:
     assert registry.active[0].lowering_provided is True
     assert registry.active[0].packages == ("pandas",)
     assert tuple(binding.plugin_type for binding in registry.types) == PLUGIN_TYPES
-    assert len(PLUGIN_TYPES) == 2
+    assert len(PLUGIN_TYPES) == 3
     assert [plugin_type.key for plugin_type in PLUGIN_TYPES] == [
         "rextio-pandas/series-f64",
         "rextio-pandas/series-i64",
+        "rextio-pandas/series-bool",
     ]
     assert all(
         isinstance(plugin_type.conversion, BoundaryConversion) for plugin_type in PLUGIN_TYPES
@@ -337,7 +338,7 @@ def guarded(name, *args, **kwargs):
     return real_import(name, *args, **kwargs)
 builtins.__import__ = guarded
 
-from rextio_pandas.types import DataFrameF64, SeriesF64, SeriesI64
+from rextio_pandas.types import DataFrameF64, SeriesBool, SeriesF64, SeriesI64
 
 class Row:
     x: float
@@ -345,6 +346,7 @@ class Row:
 assert DataFrameF64[Row] is DataFrameF64
 assert SeriesF64.__module__ == "rextio_pandas.types"
 assert SeriesI64.__module__ == "rextio_pandas.types"
+assert SeriesBool.__module__ == "rextio_pandas.types"
 assert not any(name == "pandas" or name.startswith("pandas.") for name in sys.modules)
 print("ok")
 """
@@ -376,9 +378,9 @@ def test_future_and_eager_annotation_spellings() -> None:
     future: dict[str, object] = {}
     exec(
         "from __future__ import annotations\n"
-        "from rextio_pandas.types import SeriesI64\n"
-        "def f(value: SeriesI64) -> SeriesI64:\n"
+        "from rextio_pandas.types import SeriesBool\n"
+        "def f(value: SeriesBool) -> SeriesBool:\n"
         "    return value\n",
         future,
     )
-    assert future["f"].__annotations__ == {"value": "SeriesI64", "return": "SeriesI64"}  # type: ignore[union-attr]
+    assert future["f"].__annotations__ == {"value": "SeriesBool", "return": "SeriesBool"}  # type: ignore[union-attr]

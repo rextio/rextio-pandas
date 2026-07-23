@@ -19,6 +19,10 @@ class SeriesI64:
     """An exact pandas Series with non-nullable NumPy ``int64`` storage."""
 
 
+class SeriesBool:
+    """An exact pandas Series with non-nullable NumPy ``bool`` storage."""
+
+
 class DataFrameF64:
     """Research-only DataFrame marker; not a registered native plugin type."""
 
@@ -33,4 +37,4 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(name)
 
 
-__all__ = ["DataFrameF64", "SeriesF64", "SeriesI64"]
+__all__ = ["DataFrameF64", "SeriesBool", "SeriesF64", "SeriesI64"]

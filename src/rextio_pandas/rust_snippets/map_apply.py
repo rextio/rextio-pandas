@@ -8,13 +8,14 @@ from typing import TypedDict
 
 from rextio.plugins.api import CallableBodyExpr, CallableMeta, SchemaMeta
 
-from rextio_pandas.diagnostics import RUNTIME_ERRORS, SERIES_F64, SERIES_I64
+from rextio_pandas.diagnostics import RUNTIME_ERRORS, SERIES_BOOL, SERIES_F64, SERIES_I64
 
 _STRUCT = {
+    SERIES_BOOL: "RxtPandasSeriesBool",
     SERIES_F64: "RxtPandasSeriesF64",
     SERIES_I64: "RxtPandasSeriesI64",
 }
-_RUST_SCALAR = {SERIES_F64: "f64", SERIES_I64: "i64"}
+_RUST_SCALAR = {SERIES_BOOL: "bool", SERIES_F64: "f64", SERIES_I64: "i64"}
 
 PINNED_PANDAS_VERSION = "2.3.3"
 PINNED_NUMPY_VERSION = "2.3.5"
@@ -1290,6 +1291,11 @@ struct RxtPandasSeriesI64 {{
     source: Option<pyo3::Py<pyo3::PyAny>>,
 }}
 
+struct RxtPandasSeriesBool {{
+    values: numpy::ndarray::Array1<bool>,
+    source: Option<pyo3::Py<pyo3::PyAny>>,
+}}
+
 struct RxtPandasFrameF64 {{
     values: numpy::ndarray::Array2<f64>,
     columns: Vec<String>,
@@ -1562,6 +1568,22 @@ fn __rxtpd_extract_series_i64<'py>(
     }})
 }}
 
+fn __rxtpd_extract_series_bool<'py>(
+    py: pyo3::Python<'py>,
+    value: &pyo3::Bound<'py, pyo3::PyAny>,
+) -> pyo3::PyResult<RxtPandasSeriesBool> {{
+    use numpy::PyArrayMethods;
+    let (source, array) = __rxtpd_series_parts(py, value, "bool", {error["series_bool"]})?;
+    let typed = array
+        .cast::<numpy::PyArray1<bool>>()
+        .map_err(|_| __rxtpd_type_error({error["series_bool"]}))?;
+    let values = typed.readonly().as_array().to_owned();
+    Ok(RxtPandasSeriesBool {{
+        values,
+        source: Some(source),
+    }})
+}}
+
 fn __rxtpd_extract_frame_f64<'py>(
     py: pyo3::Python<'py>,
     value: &pyo3::Bound<'py, pyo3::PyAny>,
@@ -1677,6 +1699,15 @@ impl RxtPandasMaterializedSeries for RxtPandasSeriesI64 {{
     }}
 }}
 
+impl RxtPandasMaterializedSeries for RxtPandasSeriesBool {{
+    type Elem = bool;
+    fn into_parts(
+        self,
+    ) -> (numpy::ndarray::Array1<bool>, Option<pyo3::Py<pyo3::PyAny>>) {{
+        (self.values, self.source)
+    }}
+}}
+
 fn __rxtpd_materialize_series<'py, T>(
     py: pyo3::Python<'py>,
     value: T,
@@ -1732,6 +1763,8 @@ def _literal(expr: CallableBodyExpr) -> str:
         if value == 2**63 - 1:
             return "i64::MAX"
         return f"{value}_i64"
+    if literal.kind == "bool":
+        return "true" if literal.value is True else "false"
     raise ValueError(f"unsupported audited literal kind: {literal.kind}")
 
 
@@ -1741,6 +1774,8 @@ def _render_expr(expr: CallableBodyExpr) -> str:
     if expr.kind == "literal":
         return _literal(expr)
     if expr.kind == "unary":
+        if expr.op == "not":
+            return f"(!{_render_expr(expr.children[0])})"
         return f"(-{_render_expr(expr.children[0])})"
     if expr.kind == "binop":
         left, right = expr.children

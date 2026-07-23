@@ -25,7 +25,7 @@ from rextio.plugins.api import (
 )
 
 from rextio_pandas.claim.map_apply import SERIES_MAP_RULE
-from rextio_pandas.diagnostics import SERIES_F64, SERIES_I64
+from rextio_pandas.diagnostics import SERIES_BOOL, SERIES_F64, SERIES_I64
 from rextio_pandas.plugin import RextioPandasPlugin
 from rextio_pandas.rust_snippets.map_apply import boundary_helpers
 
@@ -39,7 +39,7 @@ def param(result_type: str) -> CallableBodyExpr:
     return CallableBodyExpr(kind="param", param_index=0, name="value", result_type=result_type)
 
 
-def literal(kind: str, value: int | float) -> CallableBodyExpr:
+def literal(kind: str, value: int | float | bool) -> CallableBodyExpr:
     return CallableBodyExpr(
         kind="literal",
         literal=ScalarLiteral(kind, value),
@@ -105,6 +105,43 @@ def branchy_f64_body() -> CallableBodyExpr:
     )
 
 
+def predicate_f64_body() -> CallableBodyExpr:
+    """Return a Core-representable bool body using its complete approved grammar."""
+    value = param("float")
+    positive = CallableBodyExpr(
+        kind="compare",
+        ops=(">",),
+        children=(value, literal("float", 0.0)),
+        result_type="bool",
+    )
+    small = CallableBodyExpr(
+        kind="compare",
+        ops=("<",),
+        children=(value, literal("float", 10.0)),
+        result_type="bool",
+    )
+    combined = CallableBodyExpr(
+        kind="boolop",
+        op="and",
+        children=(positive, small),
+        result_type="bool",
+    )
+    return CallableBodyExpr(
+        kind="cond",
+        children=(
+            CallableBodyExpr(
+                kind="unary",
+                op="not",
+                children=(combined,),
+                result_type="bool",
+            ),
+            literal("bool", False),
+            literal("bool", True),
+        ),
+        result_type="bool",
+    )
+
+
 def test_claims_branchy_f64_and_i64_identity() -> None:
     assert PLUGIN.claim(
         site(SERIES_F64, meta(branchy_f64_body(), "float", "float")), CONFIG
@@ -133,6 +170,43 @@ def test_claims_full_domain_safe_i64_to_f64_conditional() -> None:
     )
     result = PLUGIN.claim(site(SERIES_I64, meta(body, "int", "float")), CONFIG)
     assert result == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_F64)
+
+
+@pytest.mark.parametrize(
+    ("receiver_type", "input_type"),
+    [(SERIES_F64, "float"), (SERIES_I64, "int")],
+)
+def test_claims_numeric_predicates_as_exact_bool_series(
+    receiver_type: str, input_type: str
+) -> None:
+    if input_type == "int":
+        value = param("int")
+        body = CallableBodyExpr(
+            kind="boolop",
+            op="or",
+            children=(
+                CallableBodyExpr(
+                    kind="compare",
+                    ops=(">=",),
+                    children=(value, literal("int", 0)),
+                    result_type="bool",
+                ),
+                CallableBodyExpr(
+                    kind="unary",
+                    op="not",
+                    children=(literal("bool", False),),
+                    result_type="bool",
+                ),
+            ),
+            result_type="bool",
+        )
+    else:
+        body = predicate_f64_body()
+
+    assert PLUGIN.claim(site(receiver_type, meta(body, input_type, "bool")), CONFIG) == Claimed(
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_BOOL,
+    )
 
 
 @pytest.mark.parametrize(
@@ -406,6 +480,60 @@ def run(series: SeriesF64) -> SeriesF64:
     source = _generated_source(analysis, registry)
     assert source.count(boundary_helpers()) == 1
     assert source.count("fn __rxtpd_map_values_") == 1
+
+
+def test_analyzer_composes_two_and_four_stage_maps_without_intermediate_materialization(
+    tmp_path: Path,
+) -> None:
+    _write_module(
+        tmp_path,
+        """
+from rextio_pandas.types import SeriesBool, SeriesF64
+
+def scale(value: float) -> float:
+    return value * 2.0
+
+def shift(value: float) -> float:
+    return value + 1.0
+
+def predicate(value: float) -> bool:
+    return (value > 0.0 and not value == 7.0) or False
+
+def two_stage(series: SeriesF64) -> SeriesBool:
+    scaled = series.map(scale)
+    return scaled.map(predicate)
+
+def four_stage(series: SeriesF64) -> SeriesBool:
+    first = series.map(scale)
+    second = first.map(shift)
+    third = second.map(scale)
+    return third.map(predicate)
+""",
+    )
+    registry = pandas_registry()
+    analysis = analyze_project(
+        tmp_path,
+        active_plugins=registry.active,
+        plugin_registry=registry,
+        plugin_config=CONFIG,
+    )
+
+    for name, stages in (("app.kernels.two_stage", 2), ("app.kernels.four_stage", 4)):
+        function = _function(analysis, name)
+        assert function.route == "native-plugin:rextio-pandas"
+        assert function.accepted is True
+        assert len(function.plugin_claims) == stages
+        assert function.plugin_claims[-1].result_type == SERIES_BOOL
+
+    source = _generated_source(analysis, registry)
+    for name, stages in (("app__kernels__two_stage", 2), ("app__kernels__four_stage", 4)):
+        function_source = source[source.index(f"fn {name}") :]
+        next_function = function_source.find("\n#[pyfunction]", 1)
+        if next_function != -1:
+            function_source = function_source[:next_function]
+        assert function_source.count("__rxtpd_extract_series_f64(py, &series)?") == 1
+        assert function_source.count("__rxtpd_map_series_") == stages
+        assert function_source.count("__rxtpd_materialize_series(py,") == 1
 
 
 def test_analyzer_rejects_keyword_mapper_and_na_action_with_plugin_code(tmp_path: Path) -> None:

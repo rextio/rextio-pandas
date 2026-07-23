@@ -10,7 +10,8 @@ the public package range `rextio>=0.1.3,<0.2`. It is compatible with Core API
 
 | Status | Meaning |
 | --- | --- |
-| **GO** | Supported numeric `Series.map` product route (this release) |
+| **GO** | Supported numeric and bounded boolean `Series.map` product route |
+| **NO-GO** | `Series.where` / `Series.mask` — ordinary Python fallback only |
 | **NO-GO** | `DataFrame.apply(axis=1)` — ordinary Python fallback only |
 
 This is an honest alpha: the supported surface is narrow, small inputs can be
@@ -49,14 +50,20 @@ def transform(value: float) -> float:
 def is_positive(value: float) -> bool:
     return value > 0.0
 
+def invert(value: bool) -> bool:
+    return not value
+
 def run(series: SeriesF64) -> SeriesBool:
-    transformed = series.map(transform)
-    return transformed.map(is_positive)
+    transformed = series.map(transform, na_action=None)
+    positive = transformed.map(is_positive)
+    return positive.map(invert)
 ```
 
 `SeriesI64` is the corresponding non-nullable NumPy `int64` input spelling;
-`SeriesBool` is the exact NumPy `bool` result spelling for numeric predicates.
-Inputs remain only `SeriesF64` and `SeriesI64`. An
+`SeriesBool` is the exact NumPy `bool` spelling for numeric predicate results
+and the bounded boolean mapper input. Boolean receivers support only
+`bool -> bool` mappers composed from the parameter, bool literals, `not`,
+`and`/`or`, equality/inequality, and boolean conditional branches. An
 `int -> int` UDF is limited to full-domain-safe identity/literal/comparison/
 boolean/conditional bodies; an `int -> float` conditional is also supported.
 `SeriesF64` supports finite float literals, unary negation, same-type
@@ -68,13 +75,15 @@ pandas result.
 
 The receiver must be a plain local or parameter name with the exact plugin
 annotation. The mapper must be one positional bare project-function reference.
-Keyword callable forms, `na_action`, lambdas, closures, calls, division,
+The default `na_action` may be omitted or written exactly as literal
+`na_action=None`; `"ignore"`, dynamic values, duplicate/unknown keywords, and
+keyword mapper forms stay on fallback. Lambdas, closures, calls, division,
 floor/mod/power/matmul, bit/shift, identity/membership operators, unsupported
 side effects, nullable/extension/object storage, subclasses, and noncanonical
-indexes stay outside the native route.
+indexes also stay outside the native route.
 
 At runtime, accepted inputs must be an exact, nonempty `pandas.Series` with
-exact NumPy `float64` or `int64` storage, an unnamed
+exact NumPy `float64`, `int64`, or `bool` storage, an unnamed
 `RangeIndex(0, len, 1)`, empty `.attrs`,
 `flags.allows_duplicate_labels is True`, and an unmodified reachable pandas
 authority graph. That graph covers `Series.map`, inherited
@@ -120,6 +129,25 @@ materialized plugin functions (the alias-divergence and RXT092 guards), so
 return-only helper collection is verified at source-generation level. Runtime
 Series return materialization is exercised honestly through the supported
 identity `Series.map` product claim, not described as claimless lowering.
+
+## Series.where / Series.mask NO-GO
+
+`Series.where` and `Series.mask` remain ordinary pandas fallback. Core can
+represent a narrow call with a `SeriesBool` condition and same-dtype scalar
+replacement, but representation alone is not a correctness proof. The current
+native boundary freezes the executable authority graph for `Series.map`; it
+does not certify `NDFrame.where`, `NDFrame.mask`, `NDFrame._where`, manager
+alignment/casting, or their execution-relevant global bindings. Native
+selection without that graph would miss mutations that change fallback
+behavior while the Rust loop stays unchanged.
+
+The shared Series type boundary also rejects empty inputs. This cannot simply
+be relaxed for a conditional route: pandas empty `Series.map` preserves the
+input dtype even when a statically annotated mapper returns another dtype,
+whereas the current native result type is fixed by the audited callable.
+Arbitrary indexes/MultiIndex, nullable conditions, extension/object storage,
+callable conditions/replacements, omitted or keyword replacements, and
+in-place/alignment options remain outside this deferred slice.
 
 ## DataFrame.apply prototype / NO-GO
 

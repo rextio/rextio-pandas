@@ -23,11 +23,12 @@ def test_pinned_characterization_versions() -> None:
     [
         ("int64", [-2, 0, 3], int),
         ("float64", [-2.5, 0.0, 3.5], float),
+        ("bool", [True, False, True], bool),
     ],
 )
 def test_series_map_mapper_receives_python_scalars(
     dtype: str,
-    values: list[int] | list[float],
+    values: list[int] | list[float] | list[bool],
     scalar_type: type[int] | type[float],
 ) -> None:
     seen: list[type[object]] = []
@@ -39,7 +40,7 @@ def test_series_map_mapper_receives_python_scalars(
     assert_series_equal(result, source, check_exact=True)
 
 
-@pytest.mark.parametrize("dtype", ["int64", "float64"])
+@pytest.mark.parametrize("dtype", ["int64", "float64", "bool"])
 def test_series_map_empty_preserves_contract_without_calling_mapper(dtype: str) -> None:
     calls = 0
     source = pd.Series([], dtype=dtype, name="empty")

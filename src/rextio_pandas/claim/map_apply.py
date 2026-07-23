@@ -29,7 +29,13 @@ from rextio_pandas.diagnostics import (
 SERIES_MAP_RULE = "rextio-pandas/series-map"
 
 _COMPARISONS = frozenset({"==", "!=", "<", "<=", ">", ">="})
+_BOOL_COMPARISONS = frozenset({"==", "!="})
 _FLOAT_BINOPS = frozenset({"+", "-", "*"})
+_SCALAR_BY_SERIES = {
+    SERIES_BOOL: "bool",
+    SERIES_F64: "float",
+    SERIES_I64: "int",
+}
 
 
 @dataclass(frozen=True)
@@ -90,6 +96,8 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
     if expr.kind == "compare":
         if not expr.ops or any(op not in _COMPARISONS for op in expr.ops):
             return _fail("identity, membership, and unaudited comparisons are rejected")
+        if input_type == "bool" and any(op not in _BOOL_COMPARISONS for op in expr.ops):
+            return _fail("boolean comparisons are limited to equality and inequality")
         if len(set(child_types)) != 1 or child_types[0] != input_type:
             return _fail("comparisons must use only the input scalar type")
         if expr.result_type != "bool":
@@ -117,7 +125,9 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
 
 def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     """Validate signature and every body node without trusting a native symbol."""
-    input_type = "float" if receiver_type == SERIES_F64 else "int"
+    input_type = _SCALAR_BY_SERIES.get(receiver_type)
+    if input_type is None:
+        return _fail("the Series receiver type is outside the supported scalar matrix")
     if meta.arg_index != 0 or meta.keyword:
         return _fail("the mapper must be the sole positional callable")
     if len(meta.params) != 1:
@@ -125,7 +135,12 @@ def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     param = meta.params[0]
     if param.param_type != input_type:
         return _fail(f"the mapper parameter must be annotated {input_type}")
-    if meta.return_type not in ({"float", "bool"} if input_type == "float" else {"int", "float", "bool"}):
+    allowed_returns = {
+        "bool": {"bool"},
+        "float": {"float", "bool"},
+        "int": {"int", "float", "bool"},
+    }[input_type]
+    if meta.return_type not in allowed_returns:
         return _fail("the mapper return annotation is outside the supported scalar matrix")
     if meta.runtime_semantics:
         return _fail("runtime-semantics callables cannot run in the pandas native loop")
@@ -138,6 +153,21 @@ def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     if audit.result_type != meta.return_type:
         return _fail("the audited body type does not match the return annotation")
     return audit
+
+
+def is_default_na_action(site: ClaimSite) -> bool:
+    """Return whether Series.map uses its default ``na_action`` semantics."""
+    if not site.keywords:
+        return True
+    if len(site.keywords) != 1:
+        return False
+    keyword = site.keywords[0]
+    return (
+        keyword.name == "na_action"
+        and keyword.arg_type == "None"
+        and keyword.literal.is_literal
+        and keyword.literal.value is None
+    )
 
 
 def _audit_row_expr(
@@ -246,12 +276,20 @@ def _claim_series_map(site: ClaimSite) -> ClaimResult:
             "the receiver must be a plain local or parameter name",
             "Bind the exact annotated Series to a plain name before calling series.map(udf).",
         )
-    if len(site.operand_types) != 1 or site.keywords or len(site.callables) != 1:
+    if (
+        site.operand_types != (None,)
+        or len(site.operand_literals) != 1
+        or site.operand_literals[0].is_literal
+        or not is_default_na_action(site)
+        or len(site.callables) != 1
+    ):
         return reject(
             site,
             DIAGNOSTIC_SHAPE,
-            "only series.map(udf) with one positional project-function reference is supported",
-            "Remove na_action, keyword callable forms, and every extra argument.",
+            "only series.map(udf) or series.map(udf, na_action=None) with one "
+            "positional project-function reference is supported",
+            "Use the default na_action (omitted or literal None), and remove keyword "
+            "callable forms and every extra argument.",
         )
     meta = site.callables[0]
     audit = audit_series_callable(meta, receiver.arg_type)
@@ -297,4 +335,5 @@ __all__ = [
     "audit_frame_callable",
     "audit_series_callable",
     "claim",
+    "is_default_na_action",
 ]

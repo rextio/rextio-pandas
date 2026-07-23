@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -17,9 +18,10 @@ from rextio.plugins.api import (
     CallableMeta,
     CallableParam,
     Claimed,
+    ClaimLiteral,
     ClaimSite,
+    KeywordArg,
     LoweringContext,
-    NotCovered,
     ReceiverMeta,
     Rejected,
     ScalarLiteral,
@@ -75,6 +77,7 @@ def site(
         column=0,
         receiver=ReceiverMeta(arg_type=receiver_type, expr_kind="name", is_safe=True),
         callables=(callable_meta,),
+        operand_literals=(ClaimLiteral(is_literal=False),),
         keywords=keywords,  # type: ignore[arg-type]
     )
 
@@ -139,6 +142,16 @@ def predicate_f64_body() -> CallableBodyExpr:
             literal("bool", False),
             literal("bool", True),
         ),
+        result_type="bool",
+    )
+
+
+def invert_bool_body() -> CallableBodyExpr:
+    """Return the bounded SeriesBool mapper body."""
+    return CallableBodyExpr(
+        kind="unary",
+        op="not",
+        children=(param("bool"),),
         result_type="bool",
     )
 
@@ -210,9 +223,31 @@ def test_claims_numeric_predicates_as_exact_bool_series(
     )
 
 
-def test_series_bool_remains_a_result_boundary_not_a_map_receiver() -> None:
-    result = PLUGIN.claim(site(SERIES_BOOL, meta(param("int"), "int", "int")), CONFIG)
-    assert result == NotCovered()
+def test_claims_bounded_series_bool_to_bool_map() -> None:
+    assert PLUGIN.claim(
+        site(SERIES_BOOL, meta(invert_bool_body(), "bool", "bool")),
+        CONFIG,
+    ) == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_BOOL)
+
+    ordering = CallableBodyExpr(
+        kind="compare",
+        ops=("<",),
+        children=(param("bool"), literal("bool", True)),
+        result_type="bool",
+    )
+    wrong_return = PLUGIN.claim(
+        site(SERIES_BOOL, meta(param("bool"), "bool", "int")),
+        CONFIG,
+    )
+    assert isinstance(wrong_return, Rejected)
+    assert wrong_return.diagnostic.code == "RXTP-PANDAS-002"
+
+    rejected_ordering = PLUGIN.claim(
+        site(SERIES_BOOL, meta(ordering, "bool", "bool")),
+        CONFIG,
+    )
+    assert isinstance(rejected_ordering, Rejected)
+    assert rejected_ordering.diagnostic.code == "RXTP-PANDAS-003"
 
 
 @pytest.mark.parametrize(
@@ -289,6 +324,54 @@ def test_rejects_wrong_signature_and_shape() -> None:
     assert result.diagnostic.code == "RXTP-PANDAS-001"
 
 
+def test_claims_only_exact_literal_none_na_action() -> None:
+    callable_meta = meta(param("float"), "float", "float")
+    exact_none = KeywordArg(
+        name="na_action",
+        arg_type="None",
+        literal=ClaimLiteral(is_literal=True, value=None),
+    )
+
+    assert PLUGIN.claim(site(SERIES_F64, callable_meta, keywords=(exact_none,)), CONFIG) == Claimed(
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_F64,
+    )
+
+    near_misses = (
+        KeywordArg(
+            name="na_action",
+            arg_type="str",
+            literal=ClaimLiteral(is_literal=True, value="ignore"),
+        ),
+        KeywordArg(
+            name="na_action",
+            arg_type="None",
+            literal=ClaimLiteral(is_literal=False),
+        ),
+        KeywordArg(
+            name="na_action",
+            arg_type="str",
+            literal=ClaimLiteral(is_literal=True, value=None),
+        ),
+        KeywordArg(
+            name="arg",
+            arg_type="None",
+            literal=ClaimLiteral(is_literal=True, value=None),
+        ),
+    )
+    for keyword in near_misses:
+        result = PLUGIN.claim(site(SERIES_F64, callable_meta, keywords=(keyword,)), CONFIG)
+        assert isinstance(result, Rejected)
+        assert result.diagnostic.code == "RXTP-PANDAS-001"
+
+    duplicate = PLUGIN.claim(
+        site(SERIES_F64, callable_meta, keywords=(exact_none, exact_none)),
+        CONFIG,
+    )
+    assert isinstance(duplicate, Rejected)
+    assert duplicate.diagnostic.code == "RXTP-PANDAS-001"
+
+
 def test_lower_is_deterministic_and_contains_pure_detached_hot_loop() -> None:
     callable_meta = meta(branchy_f64_body(), "float", "float")
     claimed = site(SERIES_F64, callable_meta)
@@ -322,6 +405,29 @@ def test_lower_is_deterministic_and_contains_pure_detached_hot_loop() -> None:
     assert "if " in hot
 
 
+def test_lower_series_bool_map_uses_the_existing_pure_bool_loop() -> None:
+    callable_meta = meta(invert_bool_body(), "bool", "bool")
+    claimed = replace(
+        site(SERIES_BOOL, callable_meta),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_BOOL,
+    )
+    context = LoweringContext(
+        operands=("invert",),
+        receiver="flags",
+        target_language="rust",
+        fresh_name=lambda prefix: f"{prefix}_0",
+    )
+
+    lowered = PLUGIN.lower(claimed, context)
+
+    assert lowered.rust.endswith("(py, &flags)?")
+    source = "\n".join(lowered.helpers)
+    assert "input: &numpy::ndarray::Array1<bool>" in source
+    assert "numpy::ndarray::Array1<bool>" in source
+    assert "output.push((!value));" in source
+
+
 def test_lower_keeps_api_13_contexts_without_a_backend_field_on_pyo3() -> None:
     callable_meta = meta(branchy_f64_body(), "float", "float")
     claimed = ClaimSite(
@@ -332,7 +438,10 @@ def test_lower_keeps_api_13_contexts_without_a_backend_field_on_pyo3() -> None:
         }
     )
 
-    lowered = PLUGIN.lower(claimed, SimpleNamespace(receiver="series"))
+    lowered = PLUGIN.lower(
+        claimed,
+        SimpleNamespace(receiver="series", operands=("udf",), target_language="rust"),
+    )
 
     assert lowered.rust.endswith("(py, &series)?")
 
@@ -349,7 +458,121 @@ def test_lower_rejects_non_pyo3_backends(backend: str) -> None:
     )
 
     with pytest.raises(ValueError, match="PyO3 host-extension lowering"):
-        PLUGIN.lower(claimed, SimpleNamespace(receiver="series", backend=backend))
+        PLUGIN.lower(
+            claimed,
+            SimpleNamespace(
+                receiver="series",
+                operands=("udf",),
+                target_language="rust",
+                backend=backend,
+            ),
+        )
+
+
+def test_lower_rejects_forged_series_map_site_before_helper_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    claimed = replace(
+        site(SERIES_F64, callable_meta),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_F64,
+    )
+    context = LoweringContext(
+        operands=("udf",),
+        receiver="series",
+        target_language="rust",
+        fresh_name=lambda prefix: f"{prefix}_0",
+    )
+    forged_receiver = SimpleNamespace(
+        arg_type=SERIES_F64,
+        expr_kind="name",
+        is_safe=False,
+        schema=None,
+    )
+    forged_sites = (
+        replace(claimed, kind="binop"),
+        replace(claimed, target="map"),
+        replace(claimed, target="series.apply"),
+        replace(claimed, receiver=ReceiverMeta(SERIES_F64, "call", False)),
+        replace(claimed, receiver=forged_receiver),  # type: ignore[arg-type]
+        replace(claimed, receiver=ReceiverMeta("float", "name", True)),
+        replace(claimed, operand_types=()),
+        replace(claimed, operand_types=("float",)),
+        replace(claimed, operand_literals=()),
+        replace(claimed, operand_literals=(ClaimLiteral(is_literal=True, value=None),)),
+        replace(
+            claimed,
+            keywords=(
+                KeywordArg(
+                    name="na_action",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=True, value="ignore"),
+                ),
+            ),
+        ),
+    )
+
+    def unreachable(*args: object, **kwargs: object) -> object:
+        raise AssertionError("forged lower metadata reached Series.map helper generation")
+
+    monkeypatch.setattr("rextio_pandas.lower.map_apply.series_map_helpers", unreachable)
+    for forged in forged_sites:
+        with pytest.raises(ValueError, match="malformed Series.map lower metadata"):
+            PLUGIN.lower(forged, context)
+
+
+@pytest.mark.parametrize(
+    "context",
+    (
+        SimpleNamespace(receiver=None, operands=("udf",), target_language="rust"),
+        SimpleNamespace(receiver="series", operands=(), target_language="rust"),
+        SimpleNamespace(receiver="series", operands=("udf", "extra"), target_language="rust"),
+        SimpleNamespace(receiver="series", operands=("udf",), target_language="python"),
+    ),
+)
+def test_lower_rejects_forged_series_map_context_before_helper_generation(
+    context: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    claimed = replace(
+        site(SERIES_F64, callable_meta),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_F64,
+    )
+
+    def unreachable(*args: object, **kwargs: object) -> object:
+        raise AssertionError("forged lower context reached Series.map helper generation")
+
+    monkeypatch.setattr("rextio_pandas.lower.map_apply.series_map_helpers", unreachable)
+    with pytest.raises(ValueError, match="malformed Series.map lower metadata"):
+        PLUGIN.lower(claimed, context)  # type: ignore[arg-type]
+
+
+def test_lower_accepts_only_exact_literal_none_na_action() -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    exact_none = KeywordArg(
+        name="na_action",
+        arg_type="None",
+        literal=ClaimLiteral(is_literal=True, value=None),
+    )
+    claimed = replace(
+        site(SERIES_F64, callable_meta, keywords=(exact_none,)),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_F64,
+    )
+    context = LoweringContext(
+        operands=("udf",),
+        receiver="series",
+        target_language="rust",
+        fresh_name=lambda prefix: f"{prefix}_0",
+    )
+
+    lowered = PLUGIN.lower(claimed, context)
+
+    assert lowered.rust.startswith("__rxtpd_map_series_")
+    assert lowered.rust.endswith("(py, &series)?")
 
 
 def test_series_map_materializer_reuses_extraction_time_class_validation() -> None:
@@ -523,6 +746,9 @@ def shift(value: float) -> float:
 def predicate(value: float) -> bool:
     return (value > 0.0 and not value == 7.0) or False
 
+def invert(value: bool) -> bool:
+    return not value
+
 def two_stage(series: SeriesF64) -> SeriesBool:
     scaled = series.map(scale)
     return scaled.map(predicate)
@@ -532,6 +758,13 @@ def four_stage(series: SeriesF64) -> SeriesBool:
     second = first.map(shift)
     third = second.map(scale)
     return third.map(predicate)
+
+def bool_stage(series: SeriesBool) -> SeriesBool:
+    return series.map(invert)
+
+def predicate_then_invert(series: SeriesF64) -> SeriesBool:
+    flags = series.map(predicate)
+    return flags.map(invert)
 """,
     )
     registry = pandas_registry()
@@ -549,6 +782,20 @@ def four_stage(series: SeriesF64) -> SeriesBool:
         assert len(function.plugin_claims) == stages
         assert function.plugin_claims[-1].result_type == SERIES_BOOL
 
+    bool_stage = _function(analysis, "app.kernels.bool_stage")
+    assert bool_stage.route == "native-plugin:rextio-pandas"
+    assert bool_stage.accepted is True
+    assert len(bool_stage.plugin_claims) == 1
+    assert bool_stage.plugin_claims[0].receiver.arg_type == SERIES_BOOL
+    assert bool_stage.plugin_claims[0].result_type == SERIES_BOOL
+
+    predicate_then_invert = _function(analysis, "app.kernels.predicate_then_invert")
+    assert predicate_then_invert.route == "native-plugin:rextio-pandas"
+    assert predicate_then_invert.accepted is True
+    assert len(predicate_then_invert.plugin_claims) == 2
+    assert predicate_then_invert.plugin_claims[1].receiver.arg_type == SERIES_BOOL
+    assert predicate_then_invert.plugin_claims[1].result_type == SERIES_BOOL
+
     source = _generated_source(analysis, registry)
     for name, stages in (("app__kernels__two_stage", 2), ("app__kernels__four_stage", 4)):
         function_source = source[source.index(f"fn {name}") :]
@@ -559,8 +806,24 @@ def four_stage(series: SeriesF64) -> SeriesBool:
         assert function_source.count("__rxtpd_map_series_") == stages
         assert function_source.count("__rxtpd_materialize_series(py,") == 1
 
+    bool_source = source[source.index("fn app__kernels__bool_stage") :]
+    bool_next = bool_source.find("\n#[pyfunction]", 1)
+    if bool_next != -1:
+        bool_source = bool_source[:bool_next]
+    assert bool_source.count("__rxtpd_extract_series_bool(py, &series)?") == 1
+    assert bool_source.count("__rxtpd_map_series_") == 1
+    assert bool_source.count("__rxtpd_materialize_series(py,") == 1
 
-def test_analyzer_rejects_keyword_mapper_and_na_action_with_plugin_code(tmp_path: Path) -> None:
+    chained_source = source[source.index("fn app__kernels__predicate_then_invert") :]
+    chained_next = chained_source.find("\n#[pyfunction]", 1)
+    if chained_next != -1:
+        chained_source = chained_source[:chained_next]
+    assert chained_source.count("__rxtpd_extract_series_f64(py, &series)?") == 1
+    assert chained_source.count("__rxtpd_map_series_") == 2
+    assert chained_source.count("__rxtpd_materialize_series(py,") == 1
+
+
+def test_analyzer_accepts_only_literal_none_na_action_with_plugin_code(tmp_path: Path) -> None:
     _write_module(
         tmp_path,
         """
@@ -572,8 +835,15 @@ def identity(value: float) -> float:
 def keyword(series: SeriesF64) -> SeriesF64:
     return series.map(arg=identity)
 
-def na_action(series: SeriesF64) -> SeriesF64:
+def explicit_none(series: SeriesF64) -> SeriesF64:
+    return series.map(identity, na_action=None)
+
+def ignore(series: SeriesF64) -> SeriesF64:
     return series.map(identity, na_action="ignore")
+
+def dynamic(series: SeriesF64) -> SeriesF64:
+    action = None
+    return series.map(identity, na_action=action)
 """,
     )
     registry = pandas_registry()
@@ -584,7 +854,21 @@ def na_action(series: SeriesF64) -> SeriesF64:
         plugin_config=CONFIG,
     )
 
-    for qualname in ("app.kernels.keyword", "app.kernels.na_action"):
+    explicit_none = _function(analysis, "app.kernels.explicit_none")
+    assert explicit_none.route == "native-plugin:rextio-pandas"
+    assert explicit_none.accepted is True
+    assert len(explicit_none.plugin_claims) == 1
+    keyword = explicit_none.plugin_claims[0].keywords[0]
+    assert keyword.name == "na_action"
+    assert keyword.arg_type == "None"
+    assert keyword.literal.is_literal is True
+    assert keyword.literal.value is None
+
+    for qualname in ("app.kernels.keyword", "app.kernels.ignore"):
         function = _function(analysis, qualname)
         assert function.route == "fallback-python"
         assert any(d.code == "RXTP-PANDAS-001" for d in function.diagnostics)
+
+    dynamic = _function(analysis, "app.kernels.dynamic")
+    assert dynamic.route == "fallback-python"
+    assert dynamic.plugin_claims == []

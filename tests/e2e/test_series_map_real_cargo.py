@@ -56,6 +56,10 @@ def predicate(value: float) -> bool:
     return (value > 0.0 and not value == 7.0) or False
 
 
+def invert_bool(value: bool) -> bool:
+    return not value
+
+
 def map_f64(series: SeriesF64) -> SeriesF64:
     return series.map(branch_f64)
 
@@ -64,12 +68,20 @@ def map_f64_identity(series: SeriesF64) -> SeriesF64:
     return series.map(identity_f64)
 
 
+def map_f64_explicit_none(series: SeriesF64) -> SeriesF64:
+    return series.map(identity_f64, na_action=None)
+
+
 def map_i64(series: SeriesI64) -> SeriesI64:
     return series.map(identity_i64)
 
 
 def map_i64_to_f64(series: SeriesI64) -> SeriesF64:
     return series.map(classify_i64)
+
+
+def map_bool(series: SeriesBool) -> SeriesBool:
+    return series.map(invert_bool)
 
 
 def map_two_stage_to_bool(series: SeriesF64) -> SeriesBool:
@@ -82,6 +94,11 @@ def map_four_stage_to_bool(series: SeriesF64) -> SeriesBool:
     second = first.map(shift)
     third = second.map(scale)
     return third.map(predicate)
+
+
+def map_predicate_then_invert(series: SeriesF64) -> SeriesBool:
+    flags = series.map(predicate)
+    return flags.map(invert_bool)
 
 
 def parameter_signature_probe(series: SeriesF64) -> float:
@@ -163,10 +180,13 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
     for name in (
         "map_f64",
         "map_f64_identity",
+        "map_f64_explicit_none",
         "map_i64",
         "map_i64_to_f64",
+        "map_bool",
         "map_two_stage_to_bool",
         "map_four_stage_to_bool",
+        "map_predicate_then_invert",
         "parameter_signature_probe",
         "identity_map_roundtrip",
     ):
@@ -179,8 +199,8 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
     rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
         encoding="utf-8"
     )
-    assert rust.count("fn __rxtpd_map_values_") == 7
-    assert rust.count("py.detach(|| __rxtpd_map_values_") == 7
+    assert rust.count("fn __rxtpd_map_values_") == 8
+    assert rust.count("py.detach(|| __rxtpd_map_values_") == 8
     assert rust.count("struct RxtPandasSeriesF64") == 1
     for body in rust.split("fn __rxtpd_map_values_")[1:]:
         hot = body.split("fn __rxtpd_map_series_", 1)[0]
@@ -197,7 +217,11 @@ def test_chained_maps_extract_once_and_materialize_only_the_bool_result(
     rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
         encoding="utf-8"
     )
-    for name, stages in (("map_two_stage_to_bool", 2), ("map_four_stage_to_bool", 4)):
+    for name, stages in (
+        ("map_two_stage_to_bool", 2),
+        ("map_four_stage_to_bool", 4),
+        ("map_predicate_then_invert", 2),
+    ):
         start = rust.index(f"fn pandas_app__kernels__{name}")
         function = rust[start : rust.index("\n#[pyfunction]", start + 1)]
         assert function.count("__rxtpd_extract_series_f64(py, &series)?") == 1
@@ -205,7 +229,11 @@ def test_chained_maps_extract_once_and_materialize_only_the_bool_result(
         assert function.count("__rxtpd_materialize_series(py,") == 1
 
     source = pd.Series([-2.0, 0.0, 1.0, 3.5], dtype="float64", name="chain")
-    for name in ("map_two_stage_to_bool", "map_four_stage_to_bool"):
+    for name in (
+        "map_two_stage_to_bool",
+        "map_four_stage_to_bool",
+        "map_predicate_then_invert",
+    ):
         result = project.equivalence_checker(
             f"pandas_app.kernels.{name}",
             equals=_series_equal,
@@ -214,6 +242,13 @@ def test_chained_maps_extract_once_and_materialize_only_the_bool_result(
         assert result.name == source.name
         assert result.index.equals(source.index)
         assert result.attrs == source.attrs
+
+    bool_source = pd.Series([True, False, False, True], dtype="bool", name="flags")
+    bool_result = project.equivalence_checker(
+        "pandas_app.kernels.map_bool",
+        equals=_series_equal,
+    )(bool_source)
+    assert_series_equal(bool_result, ~bool_source, check_exact=True)
 
 
 def test_parameter_probe_and_identity_map_product_use_real_boundary_support(
@@ -245,6 +280,10 @@ def test_parameter_probe_and_identity_map_product_use_real_boundary_support(
         ),
         ("map_f64_identity", pd.Series([1.0], dtype="float64", name=None)),
         (
+            "map_f64_explicit_none",
+            pd.Series([-0.0, math.nan, math.inf], dtype="float64", name="explicit-none"),
+        ),
+        (
             "map_i64",
             pd.Series(
                 [np.iinfo(np.int64).min, -1, 0, 1, np.iinfo(np.int64).max],
@@ -254,7 +293,15 @@ def test_parameter_probe_and_identity_map_product_use_real_boundary_support(
         ),
         ("map_i64_to_f64", pd.Series([-2, 0, 3], dtype="int64", name="classes")),
         (
+            "map_bool",
+            pd.Series([True, False, False, True], dtype="bool", name="flags"),
+        ),
+        (
             "map_two_stage_to_bool",
+            pd.Series([-2.0, 0.0, 1.0, 3.5], dtype="float64", name="predicate"),
+        ),
+        (
+            "map_predicate_then_invert",
             pd.Series([-2.0, 0.0, 1.0, 3.5], dtype="float64", name="predicate"),
         ),
         (

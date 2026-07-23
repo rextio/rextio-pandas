@@ -140,6 +140,21 @@ def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     return audit
 
 
+def is_default_na_action(site: ClaimSite) -> bool:
+    """Return whether Series.map uses its default ``na_action`` semantics."""
+    if not site.keywords:
+        return True
+    if len(site.keywords) != 1:
+        return False
+    keyword = site.keywords[0]
+    return (
+        keyword.name == "na_action"
+        and keyword.arg_type == "None"
+        and keyword.literal.is_literal
+        and keyword.literal.value is None
+    )
+
+
 def _audit_row_expr(
     expr: CallableBodyExpr,
     param_name: str,
@@ -246,12 +261,20 @@ def _claim_series_map(site: ClaimSite) -> ClaimResult:
             "the receiver must be a plain local or parameter name",
             "Bind the exact annotated Series to a plain name before calling series.map(udf).",
         )
-    if len(site.operand_types) != 1 or site.keywords or len(site.callables) != 1:
+    if (
+        site.operand_types != (None,)
+        or len(site.operand_literals) != 1
+        or site.operand_literals[0].is_literal
+        or not is_default_na_action(site)
+        or len(site.callables) != 1
+    ):
         return reject(
             site,
             DIAGNOSTIC_SHAPE,
-            "only series.map(udf) with one positional project-function reference is supported",
-            "Remove na_action, keyword callable forms, and every extra argument.",
+            "only series.map(udf) or series.map(udf, na_action=None) with one "
+            "positional project-function reference is supported",
+            "Use the default na_action (omitted or literal None), and remove keyword "
+            "callable forms and every extra argument.",
         )
     meta = site.callables[0]
     audit = audit_series_callable(meta, receiver.arg_type)
@@ -297,4 +320,5 @@ __all__ = [
     "audit_frame_callable",
     "audit_series_callable",
     "claim",
+    "is_default_na_action",
 ]

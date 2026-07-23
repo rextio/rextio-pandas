@@ -64,6 +64,10 @@ def map_f64_identity(series: SeriesF64) -> SeriesF64:
     return series.map(identity_f64)
 
 
+def map_f64_explicit_none(series: SeriesF64) -> SeriesF64:
+    return series.map(identity_f64, na_action=None)
+
+
 def map_i64(series: SeriesI64) -> SeriesI64:
     return series.map(identity_i64)
 
@@ -163,6 +167,7 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
     for name in (
         "map_f64",
         "map_f64_identity",
+        "map_f64_explicit_none",
         "map_i64",
         "map_i64_to_f64",
         "map_two_stage_to_bool",
@@ -244,6 +249,10 @@ def test_parameter_probe_and_identity_map_product_use_real_boundary_support(
             ),
         ),
         ("map_f64_identity", pd.Series([1.0], dtype="float64", name=None)),
+        (
+            "map_f64_explicit_none",
+            pd.Series([-0.0, math.nan, math.inf], dtype="float64", name="explicit-none"),
+        ),
         (
             "map_i64",
             pd.Series(

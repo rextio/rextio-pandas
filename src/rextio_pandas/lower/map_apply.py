@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from rextio.plugins.api import ClaimSite, LoweredExpr, LoweringContext
 
-from rextio_pandas.claim.map_apply import SERIES_MAP_RULE, audit_series_callable
+from rextio_pandas.claim.map_apply import (
+    SERIES_MAP_RULE,
+    audit_series_callable,
+    is_default_na_action,
+)
 from rextio_pandas.diagnostics import SERIES_BOOL, SERIES_F64, SERIES_I64, SERIES_TYPES
 from rextio_pandas.rust_snippets.map_apply import (
     boundary_helpers,
@@ -40,7 +44,7 @@ def _lower_series_map(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr:
         or claimed.operand_types != (None,)
         or len(claimed.operand_literals) != 1
         or claimed.operand_literals[0].is_literal
-        or claimed.keywords
+        or not is_default_na_action(claimed)
         or len(claimed.callables) != 1
         or ctx.receiver is None
         or len(ctx.operands) != 1

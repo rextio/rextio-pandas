@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Accept explicit literal `na_action=None` as exactly equivalent to the omitted
+  `Series.map` default. `"ignore"`, dynamic values, duplicate/unknown keywords,
+  and keyword mapper forms remain fail-closed fallback.
 - Derive Series length from the guarded exact NumPy ndarray rather than
   `pandas.Series.__len__`, preserving native/fallback behavior when unrelated
   Series length dispatch is monkeypatched.

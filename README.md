@@ -50,7 +50,7 @@ def is_positive(value: float) -> bool:
     return value > 0.0
 
 def run(series: SeriesF64) -> SeriesBool:
-    transformed = series.map(transform)
+    transformed = series.map(transform, na_action=None)
     return transformed.map(is_positive)
 ```
 
@@ -68,10 +68,12 @@ pandas result.
 
 The receiver must be a plain local or parameter name with the exact plugin
 annotation. The mapper must be one positional bare project-function reference.
-Keyword callable forms, `na_action`, lambdas, closures, calls, division,
+The default `na_action` may be omitted or written exactly as literal
+`na_action=None`; `"ignore"`, dynamic values, duplicate/unknown keywords, and
+keyword mapper forms stay on fallback. Lambdas, closures, calls, division,
 floor/mod/power/matmul, bit/shift, identity/membership operators, unsupported
 side effects, nullable/extension/object storage, subclasses, and noncanonical
-indexes stay outside the native route.
+indexes also stay outside the native route.
 
 At runtime, accepted inputs must be an exact, nonempty `pandas.Series` with
 exact NumPy `float64` or `int64` storage, an unnamed

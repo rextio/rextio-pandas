@@ -19,6 +19,11 @@ def lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr:
 
 def _lower_series_map(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr:
     """Lower one defensively revalidated Series map claim."""
+    if getattr(ctx, "backend", "pyo3") != "pyo3":
+        raise ValueError(
+            "rextio-pandas supports only PyO3 host-extension lowering; "
+            "standalone artifact lowering is not declared"
+        )
     receiver = claimed.receiver
     if (
         claimed.rule_id != SERIES_MAP_RULE

@@ -29,7 +29,13 @@ from rextio_pandas.diagnostics import (
 SERIES_MAP_RULE = "rextio-pandas/series-map"
 
 _COMPARISONS = frozenset({"==", "!=", "<", "<=", ">", ">="})
+_BOOL_COMPARISONS = frozenset({"==", "!="})
 _FLOAT_BINOPS = frozenset({"+", "-", "*"})
+_SCALAR_BY_SERIES = {
+    SERIES_BOOL: "bool",
+    SERIES_F64: "float",
+    SERIES_I64: "int",
+}
 
 
 @dataclass(frozen=True)
@@ -90,6 +96,8 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
     if expr.kind == "compare":
         if not expr.ops or any(op not in _COMPARISONS for op in expr.ops):
             return _fail("identity, membership, and unaudited comparisons are rejected")
+        if input_type == "bool" and any(op not in _BOOL_COMPARISONS for op in expr.ops):
+            return _fail("boolean comparisons are limited to equality and inequality")
         if len(set(child_types)) != 1 or child_types[0] != input_type:
             return _fail("comparisons must use only the input scalar type")
         if expr.result_type != "bool":
@@ -117,7 +125,9 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
 
 def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     """Validate signature and every body node without trusting a native symbol."""
-    input_type = "float" if receiver_type == SERIES_F64 else "int"
+    input_type = _SCALAR_BY_SERIES.get(receiver_type)
+    if input_type is None:
+        return _fail("the Series receiver type is outside the supported scalar matrix")
     if meta.arg_index != 0 or meta.keyword:
         return _fail("the mapper must be the sole positional callable")
     if len(meta.params) != 1:
@@ -125,7 +135,12 @@ def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     param = meta.params[0]
     if param.param_type != input_type:
         return _fail(f"the mapper parameter must be annotated {input_type}")
-    if meta.return_type not in ({"float", "bool"} if input_type == "float" else {"int", "float", "bool"}):
+    allowed_returns = {
+        "bool": {"bool"},
+        "float": {"float", "bool"},
+        "int": {"int", "float", "bool"},
+    }[input_type]
+    if meta.return_type not in allowed_returns:
         return _fail("the mapper return annotation is outside the supported scalar matrix")
     if meta.runtime_semantics:
         return _fail("runtime-semantics callables cannot run in the pandas native loop")

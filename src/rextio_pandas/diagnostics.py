@@ -12,8 +12,7 @@ SERIES_BOOL = "rextio-pandas/series-bool"
 # registered in the plugin type vocabulary and cannot reach claim/lower.
 PROTOTYPE_FRAME_F64 = "rextio-pandas/prototype-frame-f64"
 
-# Bool is a materialized result boundary, not an accepted Series.map receiver.
-SERIES_TYPES = frozenset({SERIES_F64, SERIES_I64})
+SERIES_TYPES = frozenset({SERIES_F64, SERIES_I64, SERIES_BOOL})
 
 DIAGNOSTIC_SHAPE = "RXTP-PANDAS-001"
 DIAGNOSTIC_SIGNATURE = "RXTP-PANDAS-002"

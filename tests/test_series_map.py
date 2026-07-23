@@ -22,7 +22,6 @@ from rextio.plugins.api import (
     ClaimSite,
     KeywordArg,
     LoweringContext,
-    NotCovered,
     ReceiverMeta,
     Rejected,
     ScalarLiteral,
@@ -147,6 +146,16 @@ def predicate_f64_body() -> CallableBodyExpr:
     )
 
 
+def invert_bool_body() -> CallableBodyExpr:
+    """Return the bounded SeriesBool mapper body."""
+    return CallableBodyExpr(
+        kind="unary",
+        op="not",
+        children=(param("bool"),),
+        result_type="bool",
+    )
+
+
 def test_claims_branchy_f64_and_i64_identity() -> None:
     assert PLUGIN.claim(
         site(SERIES_F64, meta(branchy_f64_body(), "float", "float")), CONFIG
@@ -214,9 +223,31 @@ def test_claims_numeric_predicates_as_exact_bool_series(
     )
 
 
-def test_series_bool_remains_a_result_boundary_not_a_map_receiver() -> None:
-    result = PLUGIN.claim(site(SERIES_BOOL, meta(param("int"), "int", "int")), CONFIG)
-    assert result == NotCovered()
+def test_claims_bounded_series_bool_to_bool_map() -> None:
+    assert PLUGIN.claim(
+        site(SERIES_BOOL, meta(invert_bool_body(), "bool", "bool")),
+        CONFIG,
+    ) == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_BOOL)
+
+    ordering = CallableBodyExpr(
+        kind="compare",
+        ops=("<",),
+        children=(param("bool"), literal("bool", True)),
+        result_type="bool",
+    )
+    wrong_return = PLUGIN.claim(
+        site(SERIES_BOOL, meta(param("bool"), "bool", "int")),
+        CONFIG,
+    )
+    assert isinstance(wrong_return, Rejected)
+    assert wrong_return.diagnostic.code == "RXTP-PANDAS-002"
+
+    rejected_ordering = PLUGIN.claim(
+        site(SERIES_BOOL, meta(ordering, "bool", "bool")),
+        CONFIG,
+    )
+    assert isinstance(rejected_ordering, Rejected)
+    assert rejected_ordering.diagnostic.code == "RXTP-PANDAS-003"
 
 
 @pytest.mark.parametrize(
@@ -374,6 +405,29 @@ def test_lower_is_deterministic_and_contains_pure_detached_hot_loop() -> None:
     assert "if " in hot
 
 
+def test_lower_series_bool_map_uses_the_existing_pure_bool_loop() -> None:
+    callable_meta = meta(invert_bool_body(), "bool", "bool")
+    claimed = replace(
+        site(SERIES_BOOL, callable_meta),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_BOOL,
+    )
+    context = LoweringContext(
+        operands=("invert",),
+        receiver="flags",
+        target_language="rust",
+        fresh_name=lambda prefix: f"{prefix}_0",
+    )
+
+    lowered = PLUGIN.lower(claimed, context)
+
+    assert lowered.rust.endswith("(py, &flags)?")
+    source = "\n".join(lowered.helpers)
+    assert "input: &numpy::ndarray::Array1<bool>" in source
+    assert "numpy::ndarray::Array1<bool>" in source
+    assert "output.push((!value));" in source
+
+
 def test_lower_keeps_api_13_contexts_without_a_backend_field_on_pyo3() -> None:
     callable_meta = meta(branchy_f64_body(), "float", "float")
     claimed = ClaimSite(
@@ -442,7 +496,7 @@ def test_lower_rejects_forged_series_map_site_before_helper_generation(
         replace(claimed, target="series.apply"),
         replace(claimed, receiver=ReceiverMeta(SERIES_F64, "call", False)),
         replace(claimed, receiver=forged_receiver),  # type: ignore[arg-type]
-        replace(claimed, receiver=ReceiverMeta(SERIES_BOOL, "name", True)),
+        replace(claimed, receiver=ReceiverMeta("float", "name", True)),
         replace(claimed, operand_types=()),
         replace(claimed, operand_types=("float",)),
         replace(claimed, operand_literals=()),
@@ -692,6 +746,9 @@ def shift(value: float) -> float:
 def predicate(value: float) -> bool:
     return (value > 0.0 and not value == 7.0) or False
 
+def invert(value: bool) -> bool:
+    return not value
+
 def two_stage(series: SeriesF64) -> SeriesBool:
     scaled = series.map(scale)
     return scaled.map(predicate)
@@ -701,6 +758,13 @@ def four_stage(series: SeriesF64) -> SeriesBool:
     second = first.map(shift)
     third = second.map(scale)
     return third.map(predicate)
+
+def bool_stage(series: SeriesBool) -> SeriesBool:
+    return series.map(invert)
+
+def predicate_then_invert(series: SeriesF64) -> SeriesBool:
+    flags = series.map(predicate)
+    return flags.map(invert)
 """,
     )
     registry = pandas_registry()
@@ -718,6 +782,20 @@ def four_stage(series: SeriesF64) -> SeriesBool:
         assert len(function.plugin_claims) == stages
         assert function.plugin_claims[-1].result_type == SERIES_BOOL
 
+    bool_stage = _function(analysis, "app.kernels.bool_stage")
+    assert bool_stage.route == "native-plugin:rextio-pandas"
+    assert bool_stage.accepted is True
+    assert len(bool_stage.plugin_claims) == 1
+    assert bool_stage.plugin_claims[0].receiver.arg_type == SERIES_BOOL
+    assert bool_stage.plugin_claims[0].result_type == SERIES_BOOL
+
+    predicate_then_invert = _function(analysis, "app.kernels.predicate_then_invert")
+    assert predicate_then_invert.route == "native-plugin:rextio-pandas"
+    assert predicate_then_invert.accepted is True
+    assert len(predicate_then_invert.plugin_claims) == 2
+    assert predicate_then_invert.plugin_claims[1].receiver.arg_type == SERIES_BOOL
+    assert predicate_then_invert.plugin_claims[1].result_type == SERIES_BOOL
+
     source = _generated_source(analysis, registry)
     for name, stages in (("app__kernels__two_stage", 2), ("app__kernels__four_stage", 4)):
         function_source = source[source.index(f"fn {name}") :]
@@ -727,6 +805,22 @@ def four_stage(series: SeriesF64) -> SeriesBool:
         assert function_source.count("__rxtpd_extract_series_f64(py, &series)?") == 1
         assert function_source.count("__rxtpd_map_series_") == stages
         assert function_source.count("__rxtpd_materialize_series(py,") == 1
+
+    bool_source = source[source.index("fn app__kernels__bool_stage") :]
+    bool_next = bool_source.find("\n#[pyfunction]", 1)
+    if bool_next != -1:
+        bool_source = bool_source[:bool_next]
+    assert bool_source.count("__rxtpd_extract_series_bool(py, &series)?") == 1
+    assert bool_source.count("__rxtpd_map_series_") == 1
+    assert bool_source.count("__rxtpd_materialize_series(py,") == 1
+
+    chained_source = source[source.index("fn app__kernels__predicate_then_invert") :]
+    chained_next = chained_source.find("\n#[pyfunction]", 1)
+    if chained_next != -1:
+        chained_source = chained_source[:chained_next]
+    assert chained_source.count("__rxtpd_extract_series_f64(py, &series)?") == 1
+    assert chained_source.count("__rxtpd_map_series_") == 2
+    assert chained_source.count("__rxtpd_materialize_series(py,") == 1
 
 
 def test_analyzer_accepts_only_literal_none_na_action_with_plugin_code(tmp_path: Path) -> None:

@@ -9,6 +9,9 @@
   the same API major and a minor of at least 3.
 - Reject standalone/non-PyO3 lowering explicitly. This provider does not
   declare an artifact capability.
+- Keep the NO-GO `DataFrame.apply` warning characterization bounded to the two
+  exact NumPy 2.3.5 platform observations: scalar remainder is silent on
+  macOS arm64 and emits four `RuntimeWarning`s on Linux x86_64.
 
 ## 0.1.0 (2026-07-17)
 

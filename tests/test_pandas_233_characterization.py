@@ -357,25 +357,32 @@ def test_dataframe_apply_float_special_values_warnings_and_signed_zero() -> None
 
 
 @pytest.mark.parametrize(
-    ("operator", "mapper", "messages"),
+    ("operator", "mapper", "message_variants"),
     [
         (
             "divide",
             lambda row: row["value"] / 0,
-            ["invalid value encountered in scalar divide"] * 2,
+            (("invalid value encountered in scalar divide",) * 2,),
         ),
         (
             "floor_divide",
             lambda row: row["value"] // 0,
-            ["invalid value encountered in scalar floor_divide"] * 2,
+            (("invalid value encountered in scalar floor_divide",) * 2,),
         ),
-        ("remainder", lambda row: row["value"] % 0, []),
+        (
+            "remainder",
+            lambda row: row["value"] % 0,
+            (
+                (),
+                ("invalid value encountered in scalar remainder",) * 4,
+            ),
+        ),
     ],
 )
 def test_dataframe_apply_numpy_float_zero_operation_warning_behavior(
     operator: str,
     mapper: object,
-    messages: list[str],
+    message_variants: tuple[tuple[str, ...], ...],
 ) -> None:
     frame = pd.DataFrame(
         {"value": [-0.0, 0.0, math.nan, math.inf, -math.inf]},
@@ -388,7 +395,13 @@ def test_dataframe_apply_numpy_float_zero_operation_warning_behavior(
 
     assert operator in {"divide", "floor_divide", "remainder"}
     assert result.dtype == np.dtype("float64")
-    assert [str(item.message) for item in caught] == messages
+    observed_messages = tuple(str(item.message) for item in caught)
+    # NumPy 2.3.5 platform wheels differ here: macOS arm64 is silent for
+    # scalar remainder while Linux x86_64 emits one warning for each of the
+    # four invalid inputs. DataFrame.apply is a NO-GO characterization, so
+    # retain both exact observations instead of turning wheel variance into a
+    # blocking Series.map product failure.
+    assert observed_messages in message_variants
     assert all(item.category is RuntimeWarning for item in caught)
 
 

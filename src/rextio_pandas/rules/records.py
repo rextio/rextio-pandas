@@ -71,7 +71,10 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         constraint="One exactly typed scalar parameter and one supported scalar return.",
         outcome="fallback",
         diagnostic_code="RXTP-PANDAS-002",
-        guidance="Annotate the mapper as float->float, int->int, or int->float.",
+        guidance=(
+            "Annotate the mapper as float->float, float->bool, int->int, "
+            "int->float, or int->bool."
+        ),
         stability="experimental",
     ),
 )

@@ -258,6 +258,13 @@ def test_clean_env_proof_script_is_public_range_and_no_deps_free() -> None:
     assert "requires CPython 3.11" in text
 
 
+def test_clean_env_proof_expected_version_tracks_package_metadata() -> None:
+    proof = _load_clean_env_proof_module()
+
+    assert proof.EXPECTED_PLUGIN_VERSION == package_version
+    assert "0.1.1" not in (ROOT / "scripts" / "clean_env_proof.py").read_text(encoding="utf-8")
+
+
 def test_clean_env_proof_interpreter_gate() -> None:
     proof = _load_clean_env_proof_module()
 
@@ -324,6 +331,11 @@ def test_public_authority_exposes_series_map_and_apply_no_go_only() -> None:
     assert "unused prototype frame definitions" in apply_no_go.constraint
     assert "prototype_dataframe_apply_helpers" not in rust_snippets.__all__
     assert not hasattr(rust_snippets, "prototype_dataframe_apply_helpers")
+
+    [signature] = [record for record in records if record.id.endswith("series-map-signature")]
+    assert signature.guidance == (
+        "Annotate the mapper as float->float, float->bool, int->int, int->float, or int->bool."
+    )
 
 
 def test_annotation_vocabulary_imports_without_pandas_or_core() -> None:

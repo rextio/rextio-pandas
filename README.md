@@ -41,21 +41,30 @@ PyPI package: `rextio-pandas`.
 The implemented source form is exactly:
 
 ```python
-from rextio_pandas.types import SeriesF64
+from rextio_pandas.types import SeriesBool, SeriesF64
 
 def transform(value: float) -> float:
     return value * 2.0 if value > 0.0 else -value
 
-def run(series: SeriesF64) -> SeriesF64:
-    return series.map(transform)
+def is_positive(value: float) -> bool:
+    return value > 0.0
+
+def run(series: SeriesF64) -> SeriesBool:
+    transformed = series.map(transform)
+    return transformed.map(is_positive)
 ```
 
-`SeriesI64` is the corresponding non-nullable NumPy `int64` spelling. An
+`SeriesI64` is the corresponding non-nullable NumPy `int64` input spelling;
+`SeriesBool` is the exact NumPy `bool` result spelling for numeric predicates.
+Inputs remain only `SeriesF64` and `SeriesI64`. An
 `int -> int` UDF is limited to full-domain-safe identity/literal/comparison/
 boolean/conditional bodies; an `int -> float` conditional is also supported.
 `SeriesF64` supports finite float literals, unary negation, same-type
-comparisons, boolean composition, conditional expressions, and audited
-`+`/`-`/`*`. A native symbol never bypasses this body audit.
+comparisons, boolean literals/composition/`not`, boolean conditional
+expressions, and audited `+`/`-`/`*`. A native symbol never bypasses this body
+audit. Two- and four-stage local-variable `Series.map` pipelines compose as
+Rust intermediates: they extract the source once and materialize only the final
+pandas result.
 
 The receiver must be a plain local or parameter name with the exact plugin
 annotation. The mapper must be one positional bare project-function reference.
@@ -93,10 +102,11 @@ result once through the same envelope as ordinary `Series.map`:
 method="map")`. The normal source-carrying path does not repeat validation at
 materialization. CPython `-O` (`optimize=1`) has a separately frozen
 `NDFrame.__finalize__` digest; `-OO` is intentionally unsupported and fails
-closed. The successful result preserves exact Series class, dtype, values
-(including NaN/Inf/signed zero), order, RangeIndex, name, and default metadata.
+closed. The successful result preserves exact Series class, dtype (including
+exact NumPy `bool` predicate results), values (including NaN/Inf/signed zero),
+order, RangeIndex, name, and default metadata.
 
-Both materialized Series types own the shared Rust boundary support through
+All three materialized Series types own the shared Rust boundary support through
 plugin API 1.3 `PluginType.helpers`. Core therefore emits the extract/type/
 materialize definitions for an accepted Series signature even when the
 function contains no plugin claim, and exact-text dedup emits the same support
@@ -141,7 +151,7 @@ coercion and NumPy-scalar warning/overflow semantics remain additional NO-GO
 constraints.
 
 All annotation markers import without pandas or Rextio. The registered
-`SeriesF64`/`SeriesI64` spellings support eager annotations and
+`SeriesF64`/`SeriesI64`/`SeriesBool` spellings support eager annotations and
 `from __future__ import annotations`.
 
 ## Benchmarks

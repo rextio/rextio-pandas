@@ -25,12 +25,26 @@ def _lower_series_map(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr:
             "standalone artifact lowering is not declared"
         )
     receiver = claimed.receiver
+    target_prefix, target_separator, target_method = claimed.target.rpartition(".")
     if (
-        claimed.rule_id != SERIES_MAP_RULE
+        claimed.kind != "call"
+        or not target_prefix
+        or target_separator != "."
+        or target_method != "map"
+        or claimed.rule_id != SERIES_MAP_RULE
         or receiver is None
         or receiver.arg_type not in SERIES_TYPES
+        or receiver.expr_kind != "name"
+        or receiver.is_safe is not True
+        or receiver.schema is not None
+        or claimed.operand_types != (None,)
+        or len(claimed.operand_literals) != 1
+        or claimed.operand_literals[0].is_literal
+        or claimed.keywords
         or len(claimed.callables) != 1
         or ctx.receiver is None
+        or len(ctx.operands) != 1
+        or getattr(ctx, "target_language", "rust") != "rust"
     ):
         raise ValueError("rextio-pandas received malformed Series.map lower metadata")
     meta = claimed.callables[0]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +18,9 @@ from rextio.plugins.api import (
     CallableMeta,
     CallableParam,
     Claimed,
+    ClaimLiteral,
     ClaimSite,
+    KeywordArg,
     LoweringContext,
     NotCovered,
     ReceiverMeta,
@@ -75,6 +78,7 @@ def site(
         column=0,
         receiver=ReceiverMeta(arg_type=receiver_type, expr_kind="name", is_safe=True),
         callables=(callable_meta,),
+        operand_literals=(ClaimLiteral(is_literal=False),),
         keywords=keywords,  # type: ignore[arg-type]
     )
 
@@ -332,7 +336,10 @@ def test_lower_keeps_api_13_contexts_without_a_backend_field_on_pyo3() -> None:
         }
     )
 
-    lowered = PLUGIN.lower(claimed, SimpleNamespace(receiver="series"))
+    lowered = PLUGIN.lower(
+        claimed,
+        SimpleNamespace(receiver="series", operands=("udf",), target_language="rust"),
+    )
 
     assert lowered.rust.endswith("(py, &series)?")
 
@@ -349,7 +356,96 @@ def test_lower_rejects_non_pyo3_backends(backend: str) -> None:
     )
 
     with pytest.raises(ValueError, match="PyO3 host-extension lowering"):
-        PLUGIN.lower(claimed, SimpleNamespace(receiver="series", backend=backend))
+        PLUGIN.lower(
+            claimed,
+            SimpleNamespace(
+                receiver="series",
+                operands=("udf",),
+                target_language="rust",
+                backend=backend,
+            ),
+        )
+
+
+def test_lower_rejects_forged_series_map_site_before_helper_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    claimed = replace(
+        site(SERIES_F64, callable_meta),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_F64,
+    )
+    context = LoweringContext(
+        operands=("udf",),
+        receiver="series",
+        target_language="rust",
+        fresh_name=lambda prefix: f"{prefix}_0",
+    )
+    forged_receiver = SimpleNamespace(
+        arg_type=SERIES_F64,
+        expr_kind="name",
+        is_safe=False,
+        schema=None,
+    )
+    forged_sites = (
+        replace(claimed, kind="binop"),
+        replace(claimed, target="map"),
+        replace(claimed, target="series.apply"),
+        replace(claimed, receiver=ReceiverMeta(SERIES_F64, "call", False)),
+        replace(claimed, receiver=forged_receiver),  # type: ignore[arg-type]
+        replace(claimed, receiver=ReceiverMeta(SERIES_BOOL, "name", True)),
+        replace(claimed, operand_types=()),
+        replace(claimed, operand_types=("float",)),
+        replace(claimed, operand_literals=()),
+        replace(claimed, operand_literals=(ClaimLiteral(is_literal=True, value=None),)),
+        replace(
+            claimed,
+            keywords=(
+                KeywordArg(
+                    name="na_action",
+                    arg_type="None",
+                    literal=ClaimLiteral(is_literal=True, value=None),
+                ),
+            ),
+        ),
+    )
+
+    def unreachable(*args: object, **kwargs: object) -> object:
+        raise AssertionError("forged lower metadata reached Series.map helper generation")
+
+    monkeypatch.setattr("rextio_pandas.lower.map_apply.series_map_helpers", unreachable)
+    for forged in forged_sites:
+        with pytest.raises(ValueError, match="malformed Series.map lower metadata"):
+            PLUGIN.lower(forged, context)
+
+
+@pytest.mark.parametrize(
+    "context",
+    (
+        SimpleNamespace(receiver=None, operands=("udf",), target_language="rust"),
+        SimpleNamespace(receiver="series", operands=(), target_language="rust"),
+        SimpleNamespace(receiver="series", operands=("udf", "extra"), target_language="rust"),
+        SimpleNamespace(receiver="series", operands=("udf",), target_language="python"),
+    ),
+)
+def test_lower_rejects_forged_series_map_context_before_helper_generation(
+    context: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    claimed = replace(
+        site(SERIES_F64, callable_meta),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_F64,
+    )
+
+    def unreachable(*args: object, **kwargs: object) -> object:
+        raise AssertionError("forged lower context reached Series.map helper generation")
+
+    monkeypatch.setattr("rextio_pandas.lower.map_apply.series_map_helpers", unreachable)
+    with pytest.raises(ValueError, match="malformed Series.map lower metadata"):
+        PLUGIN.lower(claimed, context)  # type: ignore[arg-type]
 
 
 def test_series_map_materializer_reuses_extraction_time_class_validation() -> None:

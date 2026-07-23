@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from rextio.plugins.api import BoundaryConversion, PluginType
 
-from rextio_pandas.diagnostics import SERIES_F64, SERIES_I64
+from rextio_pandas.diagnostics import SERIES_BOOL, SERIES_F64, SERIES_I64
 from rextio_pandas.rust_snippets.map_apply import boundary_helpers
 
 
@@ -42,6 +42,12 @@ PLUGIN_TYPES: tuple[PluginType, ...] = (
         "SeriesI64",
         "RxtPandasSeriesI64",
         "__rxtpd_extract_series_i64",
+    ),
+    _series_type(
+        SERIES_BOOL,
+        "SeriesBool",
+        "RxtPandasSeriesBool",
+        "__rxtpd_extract_series_bool",
     ),
 )
 

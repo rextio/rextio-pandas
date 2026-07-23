@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add the exact NumPy-backed `SeriesBool` result boundary for audited numeric
+  `Series.map` predicates. Inputs remain exact non-nullable `SeriesF64` or
+  `SeriesI64`; nullable BooleanDtype, object/categorical/Arrow storage, empty
+  Series, and noncanonical indexes remain unsupported.
+- Extend the audited mapper grammar only where Core callable metadata is exact:
+  bool literals, boolean `not`, `and`/`or`, comparisons, and boolean
+  conditional branches. `Series.map` can therefore compose through two or four
+  native stages, including `SeriesF64 -> SeriesF64 -> SeriesBool`, with one
+  source extraction, Rust intermediate values, and one final pandas materialization.
+- Defer the unused DataFrame prototype helper cleanup. `DataFrame.apply(axis=1)`
+  remains an explicit NO-GO and ordinary Python fallback.
 - Restore compatibility with Core 0.1.5 / plugin API 1.4 while continuing to
   declare provider API 1.3 and require `rextio>=0.1.3,<0.2`.
 - Keep the current Core loader as the primary compatibility authority, with

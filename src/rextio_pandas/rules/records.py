@@ -28,7 +28,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         provider="rextio-pandas",
         scope=RuleScope(kind="call", pattern="series.map(udf)"),
         constraint=(
-            "Exact pandas 2.3.3 Series with NumPy 2.3.5 float64/int64 storage, "
+            "Exact pandas 2.3.3 Series with NumPy 2.3.5 float64/int64 input storage, "
             "an unnamed canonical RangeIndex, default metadata, and one statically "
             "resolved audited scalar UDF. Empty inputs and runtime contract misses "
             "raise deterministic TypeError. The UDF executes in one GIL-detached "
@@ -37,9 +37,9 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         outcome="native",
         diagnostic_code=None,
         guidance=(
-            "Annotate the receiver and result with rextio_pandas.types.SeriesF64 "
-            "or SeriesI64, pass one bare project function, and keep its complete "
-            "body inside the documented comparison/conditional numeric subset."
+            "Annotate the receiver with rextio_pandas.types.SeriesF64 or SeriesI64; "
+            "use SeriesBool for an audited predicate result. Pass one bare project "
+            "function and keep its complete body inside the documented closed subset."
         ),
         stability="experimental",
         verified=True,
@@ -71,7 +71,10 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         constraint="One exactly typed scalar parameter and one supported scalar return.",
         outcome="fallback",
         diagnostic_code="RXTP-PANDAS-002",
-        guidance="Annotate the mapper as float->float, int->int, or int->float.",
+        guidance=(
+            "Annotate the mapper as float->float, float->bool, int->int, "
+            "int->float, or int->bool."
+        ),
         stability="experimental",
     ),
 )

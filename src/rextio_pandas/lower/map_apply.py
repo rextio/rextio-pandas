@@ -5,7 +5,7 @@ from __future__ import annotations
 from rextio.plugins.api import ClaimSite, LoweredExpr, LoweringContext
 
 from rextio_pandas.claim.map_apply import SERIES_MAP_RULE, audit_series_callable
-from rextio_pandas.diagnostics import SERIES_F64, SERIES_I64, SERIES_TYPES
+from rextio_pandas.diagnostics import SERIES_BOOL, SERIES_F64, SERIES_I64, SERIES_TYPES
 from rextio_pandas.rust_snippets.map_apply import (
     boundary_helpers,
     series_map_helpers,
@@ -37,7 +37,14 @@ def _lower_series_map(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr:
     audit = audit_series_callable(meta, receiver.arg_type)
     if not audit.accepted:
         raise ValueError(f"rextio-pandas refused changed callable metadata: {audit.reason}")
-    result_key = SERIES_F64 if audit.result_type == "float" else SERIES_I64
+    result_type = audit.result_type
+    if result_type not in {"float", "int", "bool"}:
+        raise ValueError("rextio-pandas refused an unsupported audited scalar result type")
+    result_key = {
+        "float": SERIES_F64,
+        "int": SERIES_I64,
+        "bool": SERIES_BOOL,
+    }[result_type]
     if claimed.result_type != result_key:
         raise ValueError(
             "rextio-pandas Series.map result type changed between claim and lower: "

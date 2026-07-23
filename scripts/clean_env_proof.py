@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -41,6 +42,18 @@ REQUIRED_REXTIO_SPEC = ">=0.1.3,<0.2"
 REQUIRED_PLUGIN_API = "1.3"
 REQUIRED_PYTHON = (3, 11)
 REQUIRED_IMPLEMENTATION = "cpython"
+
+
+def _checkout_plugin_version() -> str:
+    """Read the checkout's single package-version authority without importing dependencies."""
+    namespace = runpy.run_path(str(ROOT / "src" / "rextio_pandas" / "__about__.py"))
+    value = namespace.get("__version__")
+    if not isinstance(value, str) or not value:
+        raise RuntimeError("rextio-pandas package version authority is missing or invalid")
+    return value
+
+
+EXPECTED_PLUGIN_VERSION = _checkout_plugin_version()
 
 
 def _fail(message: str) -> NoReturn:
@@ -63,7 +76,7 @@ def _require_supported_interpreter() -> None:
     if _interpreter_supported():
         return
     _fail(
-        "rextio-pandas 0.1.1 requires CPython 3.11 "
+        f"rextio-pandas {EXPECTED_PLUGIN_VERSION} requires CPython 3.11 "
         f"(requires-python >=3.11,<3.12); got {sys.implementation.name} "
         f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     )
@@ -198,15 +211,15 @@ print(json.dumps(report))
             f"rextio {report['core_version']!r} is outside the supported range "
             f"{REQUIRED_REXTIO_SPEC}"
         )
-    if report.get("plugin_version") != "0.1.1":
+    if report.get("plugin_version") != EXPECTED_PLUGIN_VERSION:
         _fail(
             f"installed rextio-pandas metadata version is {report.get('plugin_version')!r}, "
-            "expected 0.1.1"
+            f"expected {EXPECTED_PLUGIN_VERSION}"
         )
-    if report.get("rextio_pandas_version") != "0.1.1":
+    if report.get("rextio_pandas_version") != EXPECTED_PLUGIN_VERSION:
         _fail(
             f"imported rextio_pandas.__version__ is {report.get('rextio_pandas_version')!r}, "
-            "expected 0.1.1"
+            f"expected {EXPECTED_PLUGIN_VERSION}"
         )
     if not report["rextio_file"].startswith(env_root):
         _fail(f"imported rextio is outside the fresh env: {report['rextio_file']}")

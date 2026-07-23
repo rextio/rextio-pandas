@@ -93,11 +93,15 @@ def identity_map_roundtrip(series: SeriesF64) -> SeriesF64:
 """
 
 CLAIMLESS_KERNELS = """
-from rextio_pandas.types import SeriesF64
+from rextio_pandas.types import SeriesBool, SeriesF64
 
 
 def inspect_series(series: SeriesF64) -> float:
     return 1.0
+
+
+def inspect_bool(series: SeriesBool) -> float:
+    return 2.0
 """
 
 
@@ -329,22 +333,32 @@ def test_claimless_only_parameter_signature_builds_and_executes_boundary_support
         for module in check["modules"]
         for function in module["functions"]
     }
-    assert set(functions) == {"pandas_claimless.kernels.inspect_series"}
+    assert set(functions) == {
+        "pandas_claimless.kernels.inspect_bool",
+        "pandas_claimless.kernels.inspect_series",
+    }
     record = functions["pandas_claimless.kernels.inspect_series"]
     assert record["native_status"] == "accepted"
     assert record["route"] == "native-plugin:rextio-pandas"
     assert record["plugin_claims"] == []
+    bool_record = functions["pandas_claimless.kernels.inspect_bool"]
+    assert bool_record["native_status"] == "accepted"
+    assert bool_record["route"] == "native-plugin:rextio-pandas"
+    assert bool_record["plugin_claims"] == []
 
     build = json.loads((reports / "build.json").read_text(encoding="utf-8"))
     assert build["status"] == "built"
-    assert build["accepted_native_count"] == 1
+    assert build["accepted_native_count"] == 2
 
     rust = (
         claimless_project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs"
     ).read_text(encoding="utf-8")
     assert rust.count("struct RxtPandasSeriesF64") == 1
+    assert rust.count("struct RxtPandasSeriesBool") == 1
     assert rust.count("fn __rxtpd_extract_series_f64") == 1
+    assert rust.count("fn __rxtpd_extract_series_bool") == 1
     assert "let series = __rxtpd_extract_series_f64(py, &series)?;" in rust
+    assert "let series = __rxtpd_extract_series_bool(py, &series)?;" in rust
     assert "fn __rxtpd_map_values_" not in rust
 
     valid = _run_fresh(
@@ -378,6 +392,40 @@ else:
     assert rejected.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_empty"]]
 
 
+def test_claimless_series_bool_boundary_accepts_numpy_bool_and_rejects_nullable_bool(
+    claimless_project: CertifiedProject,
+) -> None:
+    valid = _run_fresh(
+        claimless_project,
+        "native",
+        """
+import pandas as pd
+from pandas_claimless.kernels import inspect_bool
+print(inspect_bool(pd.Series([True, False], dtype="bool")))
+""",
+    )
+    assert valid.returncode == 0, valid.stderr
+    assert valid.stdout.strip() == "2.0"
+
+    rejected = _run_fresh(
+        claimless_project,
+        "native",
+        """
+import pandas as pd
+from pandas_claimless.kernels import inspect_bool
+try:
+    inspect_bool(pd.Series([True, False], dtype="boolean"))
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("nullable BooleanDtype was accepted")
+""",
+    )
+    assert rejected.returncode == 0, rejected.stderr
+    assert rejected.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_bool"]]
+
+
 def test_native_and_fallback_run_in_fresh_processes(project: CertifiedProject) -> None:
     body = """
 import json
@@ -398,6 +446,37 @@ print(json.dumps({
 """
     native = _run_fresh(project, "native", body)
     fallback = _run_fresh(project, "fallback", body)
+    assert native.returncode == 0, native.stderr
+    assert fallback.returncode == 0, fallback.stderr
+    assert json.loads(native.stdout) == json.loads(fallback.stdout)
+
+
+def test_series_len_monkeypatch_does_not_change_native_map_semantics(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import json
+import pandas as pd
+from pandas_app.kernels import map_f64
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+original_len = pd.Series.__len__
+pd.Series.__len__ = lambda self: 0
+try:
+    out = map_f64(s)
+finally:
+    pd.Series.__len__ = original_len
+
+print(json.dumps({
+    "values": out.tolist(),
+    "dtype": str(out.dtype),
+    "index": [out.index.start, out.index.stop, out.index.step, out.index.name],
+    "name": out.name,
+}, sort_keys=True))
+"""
+    native = _run_fresh(project, "native", body)
+    fallback = _run_fresh(project, "fallback", body)
+
     assert native.returncode == 0, native.stderr
     assert fallback.returncode == 0, fallback.stderr
     assert json.loads(native.stdout) == json.loads(fallback.stdout)

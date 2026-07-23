@@ -19,6 +19,7 @@ from rextio.plugins.api import (
     Claimed,
     ClaimSite,
     LoweringContext,
+    NotCovered,
     ReceiverMeta,
     Rejected,
     ScalarLiteral,
@@ -209,6 +210,11 @@ def test_claims_numeric_predicates_as_exact_bool_series(
     )
 
 
+def test_series_bool_remains_a_result_boundary_not_a_map_receiver() -> None:
+    result = PLUGIN.claim(site(SERIES_BOOL, meta(param("int"), "int", "int")), CONFIG)
+    assert result == NotCovered()
+
+
 @pytest.mark.parametrize(
     "body",
     [
@@ -358,6 +364,24 @@ def test_series_map_materializer_reuses_extraction_time_class_validation() -> No
     assert materializer.index("let Some(source) = source else") < materializer.index(
         "__rxtpd_pinned_series_class"
     )
+
+
+def test_series_boundary_derives_length_from_guarded_exact_numpy_array() -> None:
+    source = boundary_helpers()
+    boundary = source[
+        source.index("fn __rxtpd_series_parts") : source.index(
+            "fn __rxtpd_extract_series_f64"
+        )
+    ]
+
+    assert "value.len()" not in boundary
+    assert boundary.index("__rxtpd_is_exact_numpy_dtype") < boundary.index(
+        'let to_numpy = series_class.getattr("to_numpy")?'
+    )
+    assert boundary.index(".cast_into::<numpy::PyArray1<T>>()") < boundary.index(
+        "let length = typed.readonly().as_array().len()"
+    )
+    assert boundary.index("if length == 0") < boundary.index("if stop != length as isize")
 
 
 def _write_module(root: Path, source: str) -> None:

@@ -1471,12 +1471,19 @@ fn __rxtpd_pinned_frame_class<'py>(
     Ok(frame_class)
 }}
 
-fn __rxtpd_series_parts<'py>(
+fn __rxtpd_series_parts<'py, T>(
     py: pyo3::Python<'py>,
     value: &pyo3::Bound<'py, pyo3::PyAny>,
     expected_dtype: &str,
     dtype_error: &'static str,
-) -> pyo3::PyResult<(pyo3::Py<pyo3::PyAny>, pyo3::Bound<'py, pyo3::PyAny>)> {{
+) -> pyo3::PyResult<(
+    pyo3::Py<pyo3::PyAny>,
+    pyo3::Bound<'py, numpy::PyArray1<T>>,
+)>
+where
+    T: numpy::Element,
+{{
+    use numpy::PyArrayMethods;
     use pyo3::types::{{PyAnyMethods, PyDict, PyDictMethods, PyString}};
     let series_class = __rxtpd_pinned_series_class(py)?;
     let series_type = series_class.cast::<pyo3::types::PyType>()?;
@@ -1489,10 +1496,6 @@ fn __rxtpd_series_parts<'py>(
         || instance_dict.contains("to_numpy")?
     {{
         return Err(__rxtpd_type_error({error["series_method"]}));
-    }}
-    let length = value.len()?;
-    if length == 0 {{
-        return Err(__rxtpd_type_error({error["series_empty"]}));
     }}
     if value.getattr("attrs")?.len()? != 0 {{
         return Err(__rxtpd_type_error({error["series_attrs"]}));
@@ -1515,7 +1518,6 @@ fn __rxtpd_series_parts<'py>(
     let stop: isize = index.getattr("stop")?.extract()?;
     let step: isize = index.getattr("step")?.extract()?;
     if start != 0
-        || stop != length as isize
         || step != 1
         || !index.getattr("name")?.is_none()
     {{
@@ -1533,7 +1535,19 @@ fn __rxtpd_series_parts<'py>(
     let kwargs = PyDict::new(py);
     kwargs.set_item("copy", false)?;
     let array = to_numpy.call((value,), Some(&kwargs))?;
-    Ok((value.clone().unbind(), array))
+    let typed = array
+        .cast_into::<numpy::PyArray1<T>>()
+        .map_err(|_| __rxtpd_type_error(dtype_error))?;
+    // Derive shape from the exact guarded ndarray, never from mutable
+    // ``pandas.Series.__len__`` dispatch that ordinary Series.map does not use.
+    let length = typed.readonly().as_array().len();
+    if length == 0 {{
+        return Err(__rxtpd_type_error({error["series_empty"]}));
+    }}
+    if stop != length as isize {{
+        return Err(__rxtpd_type_error({error["series_index"]}));
+    }}
+    Ok((value.clone().unbind(), typed))
 }}
 
 fn __rxtpd_extract_series_f64<'py>(
@@ -1541,10 +1555,8 @@ fn __rxtpd_extract_series_f64<'py>(
     value: &pyo3::Bound<'py, pyo3::PyAny>,
 ) -> pyo3::PyResult<RxtPandasSeriesF64> {{
     use numpy::PyArrayMethods;
-    let (source, array) = __rxtpd_series_parts(py, value, "float64", {error["series_f64"]})?;
-    let typed = array
-        .cast::<numpy::PyArray1<f64>>()
-        .map_err(|_| __rxtpd_type_error({error["series_f64"]}))?;
+    let (source, typed) =
+        __rxtpd_series_parts::<f64>(py, value, "float64", {error["series_f64"]})?;
     let values = typed.readonly().as_array().to_owned();
     Ok(RxtPandasSeriesF64 {{
         values,
@@ -1557,10 +1569,8 @@ fn __rxtpd_extract_series_i64<'py>(
     value: &pyo3::Bound<'py, pyo3::PyAny>,
 ) -> pyo3::PyResult<RxtPandasSeriesI64> {{
     use numpy::PyArrayMethods;
-    let (source, array) = __rxtpd_series_parts(py, value, "int64", {error["series_i64"]})?;
-    let typed = array
-        .cast::<numpy::PyArray1<i64>>()
-        .map_err(|_| __rxtpd_type_error({error["series_i64"]}))?;
+    let (source, typed) =
+        __rxtpd_series_parts::<i64>(py, value, "int64", {error["series_i64"]})?;
     let values = typed.readonly().as_array().to_owned();
     Ok(RxtPandasSeriesI64 {{
         values,
@@ -1573,10 +1583,8 @@ fn __rxtpd_extract_series_bool<'py>(
     value: &pyo3::Bound<'py, pyo3::PyAny>,
 ) -> pyo3::PyResult<RxtPandasSeriesBool> {{
     use numpy::PyArrayMethods;
-    let (source, array) = __rxtpd_series_parts(py, value, "bool", {error["series_bool"]})?;
-    let typed = array
-        .cast::<numpy::PyArray1<bool>>()
-        .map_err(|_| __rxtpd_type_error({error["series_bool"]}))?;
+    let (source, typed) =
+        __rxtpd_series_parts::<bool>(py, value, "bool", {error["series_bool"]})?;
     let values = typed.readonly().as_array().to_owned();
     Ok(RxtPandasSeriesBool {{
         values,

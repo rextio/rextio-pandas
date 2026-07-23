@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Derive Series length from the guarded exact NumPy ndarray rather than
+  `pandas.Series.__len__`, preserving native/fallback behavior when unrelated
+  Series length dispatch is monkeypatched.
+- Add blocking real-Cargo CI on Core 0.1.5 and certify the parameter-only
+  `SeriesBool` boundary for exact NumPy bool input plus fail-closed nullable
+  BooleanDtype rejection.
+- Label the retained 2026-07-16 benchmark as historical evidence for its
+  single-stage `SeriesF64 -> SeriesF64` reference case only; it is not a new
+  Bool/pipeline speed claim.
 - Add the exact NumPy-backed `SeriesBool` result boundary for audited numeric
   `Series.map` predicates. Inputs remain exact non-nullable `SeriesF64` or
   `SeriesI64`; nullable BooleanDtype, object/categorical/Arrow storage, empty

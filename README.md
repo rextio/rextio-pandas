@@ -157,9 +157,10 @@ All annotation markers import without pandas or Rextio. The registered
 ## Benchmarks
 
 `python -m benchmarks.bench_product_routes` builds and measures the actual
-generated **Series.map-only** wrapper. Native/fallback pairs include validation,
-copies, conversion, result construction/destruction, raw samples, paired
-bootstrap intervals, correctness digests, provenance, and a null-call floor.
+generated single-stage **`SeriesF64 -> SeriesF64` `Series.map`** reference
+wrapper. Native/fallback pairs include validation, copies, conversion, result
+construction/destruction, raw samples, paired bootstrap intervals, correctness
+digests, provenance, and a null-call floor.
 Vectorized NumPy/pandas and cold/warm Numba remain context-only lanes.
 DataFrame.apply has no product cell, context cell, break-even entry, or speedup
 claim in the authoritative benchmark.
@@ -169,7 +170,7 @@ The harness uses the **installed** `rextio` package by default (public range
 core checkout, set `REXTIO_CORE_ROOT` to that directory; no machine-local path
 is hard-coded.
 
-### Authoritative Series-only result (2026-07-16)
+### Historical single-stage F64 reference result (2026-07-16)
 
 The retained full run is schema 4 at plugin commit
 `35d651b1684c6a48a6222e19635df853840aed8e` and core commit
@@ -178,6 +179,9 @@ samples per size, a 10 ms minimum calibration target, and seed `20260715`. All
 six cells passed the fail-closed headline-eligibility gates and had identical
 native/fallback correctness digests. The check/build evidence reports one
 accepted native route and zero rejected routes under plugin API 1.3.
+These historical figures cover only that single-stage F64 reference case; they
+are not timing evidence for the 0.1.2 Bool boundary or two-/four-stage pipelines,
+and 0.1.2 makes no new speed claim from them.
 
 | Size | Native median (µs) | pandas fallback median (µs) | Paired native/fallback ratio (95% CI) | Result |
 | ---: | ---: | ---: | ---: | --- |
@@ -191,14 +195,15 @@ accepted native route and zero rejected routes under plugin API 1.3.
 The paired ratio is the median of the nine within-pair ratios, not the quotient
 of the separately rounded lane medians.
 
-The **sustained measured break-even is 10,000 elements**: it is the first
-measured size whose paired 95% CI is wholly below 1.0 and remains so at every
-larger measured size. This is not an interpolated claim about the interval
-between 1,000 and 10,000, nor an extrapolation beyond 100,000. Complete
-per-public-call correctness validation supersedes the earlier 1,000-element
-threshold: native is still about 1.35× slower at 1,000, then about 6.15× faster
-at 10,000 and 26.86× faster at 100,000. The small-input losses are part of the
-result, not excluded from the headline evidence.
+For this historical single-stage F64 case, the **sustained measured break-even
+is 10,000 elements**: it is the first measured size whose paired 95% CI is
+wholly below 1.0 and remains so at every larger measured size. This is not an
+interpolated claim about the interval between 1,000 and 10,000, nor an
+extrapolation beyond 100,000. Complete per-public-call correctness validation
+supersedes the earlier 1,000-element threshold: native is still about 1.35×
+slower at 1,000, then about 6.15× faster at 10,000 and 26.86× faster at 100,000.
+The small-input losses are part of the result, not excluded from the headline
+evidence.
 Vectorized NumPy/pandas and warm Numba were faster than the native route at
 every measured size, but remain explicitly labeled context-only rather than
 Rextio target claims. See [the benchmark evidence](benchmarks/results/latest.json)

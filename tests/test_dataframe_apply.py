@@ -923,9 +923,10 @@ def test_boundary_rejects_extension_dtypes_before_conversion() -> None:
     source = boundary_helpers()
     assert "fn __rxtpd_is_exact_numpy_dtype" in source
     assert "if !dtype.is_instance(&numpy_dtype_type)?" in source
-    # The Series extraction gates dtype before ``to_numpy`` for both routes.
-    assert '__rxtpd_series_parts(py, value, "float64"' in source
-    assert '__rxtpd_series_parts(py, value, "int64"' in source
+    # Every registered Series boundary gates dtype before ``to_numpy``.
+    assert '__rxtpd_series_parts::<f64>(py, value, "float64"' in source
+    assert '__rxtpd_series_parts::<i64>(py, value, "int64"' in source
+    assert '__rxtpd_series_parts::<bool>(py, value, "bool"' in source
     assert "if !__rxtpd_is_exact_numpy_dtype(py, &dtype, expected_dtype)?" in source
     # The frame extraction checks every column dtype with the same instance gate.
     assert '__rxtpd_is_exact_numpy_dtype(py, &item, "float64")?' in source

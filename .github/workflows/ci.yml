@@ -37,3 +37,17 @@ jobs:
       - run: python -m pip install "rextio==${{ matrix.rextio }}" pandas==2.3.3 numpy==2.3.5 pytest
       - run: python -m pip install --no-deps -e .
       - run: python -m pytest tests/test_plugin_contract.py tests/test_series_map.py -m 'not needs_cargo'
+
+  native-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install rextio==0.1.5 pandas==2.3.3 numpy==2.3.5 pytest
+      - run: python -m pip install --no-deps -e .
+      - run: python -m pytest tests/e2e/test_series_map_real_cargo.py

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Promote exact non-nullable `SeriesBool -> SeriesBool` mapping through the
+  existing pinned `Series.map` authority and materialized bool boundary. The
+  boolean mapper grammar is limited to bool parameters/literals, `not`,
+  `and`/`or`, equality/inequality, and bool conditional branches.
+- Keep `Series.where` and `Series.mask` as explicit fallback. Core can represent
+  a narrow bool-condition/same-dtype-scalar shape, but the plugin has not frozen
+  the reachable pandas where/mask alignment and casting authority graph; the
+  shared empty-Series boundary also cannot be relaxed without changing
+  type-changing empty `Series.map` semantics.
 - Accept explicit literal `na_action=None` as exactly equivalent to the omitted
   `Series.map` default. `"ignore"`, dynamic values, duplicate/unknown keywords,
   and keyword mapper forms remain fail-closed fallback.

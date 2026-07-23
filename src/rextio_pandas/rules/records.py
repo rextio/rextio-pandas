@@ -4,6 +4,26 @@ from rextio.plugins.api import RuleRecord, RuleScope
 
 RULE_RECORDS: tuple[RuleRecord, ...] = (
     RuleRecord(
+        id="rextio-pandas/series-where-mask-no-go",
+        provider="rextio-pandas",
+        scope=RuleScope(kind="call", pattern="series.where / series.mask"),
+        constraint=(
+            "Core can represent a narrow SeriesBool-condition and same-dtype scalar "
+            "replacement, but the plugin has not frozen the complete pandas where/mask "
+            "alignment, casting, manager, and global-binding authority graph. The shared "
+            "Series boundary also rejects empty values because type-changing empty "
+            "Series.map calls preserve their input dtype in pandas."
+        ),
+        outcome="fallback",
+        diagnostic_code=None,
+        guidance=(
+            "Keep Series.where and Series.mask on ordinary pandas fallback until their "
+            "reachable executable authority and empty/null behavior are certified."
+        ),
+        stability="experimental",
+        verified=False,
+    ),
+    RuleRecord(
         id="rextio-pandas/dataframe-apply-prototype-no-go",
         provider="rextio-pandas",
         scope=RuleScope(kind="call", pattern="pandas.DataFrame.apply(axis=1) prototype"),
@@ -28,7 +48,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         provider="rextio-pandas",
         scope=RuleScope(kind="call", pattern="series.map(udf)"),
         constraint=(
-            "Exact pandas 2.3.3 Series with NumPy 2.3.5 float64/int64 input storage, "
+            "Exact pandas 2.3.3 Series with NumPy 2.3.5 float64/int64/bool input storage, "
             "an unnamed canonical RangeIndex, default metadata, and one statically "
             "resolved audited scalar UDF. Empty inputs and runtime contract misses "
             "raise deterministic TypeError. The UDF executes in one GIL-detached "
@@ -37,9 +57,9 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         outcome="native",
         diagnostic_code=None,
         guidance=(
-            "Annotate the receiver with rextio_pandas.types.SeriesF64 or SeriesI64; "
-            "use SeriesBool for an audited predicate result. Pass one bare project "
-            "function and keep its complete body inside the documented closed subset."
+            "Annotate the receiver with rextio_pandas.types.SeriesF64, SeriesI64, or "
+            "SeriesBool. Pass one bare project function and keep its complete body "
+            "inside the documented closed subset."
         ),
         stability="experimental",
         verified=True,
@@ -58,10 +78,16 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         id="rextio-pandas/series-map-shape",
         provider="rextio-pandas",
         scope=RuleScope(kind="call", pattern="series.map call shape"),
-        constraint="Exactly one positional bare project-function reference and no keywords.",
+        constraint=(
+            "Exactly one positional bare project-function reference, with na_action "
+            "omitted or exactly literal None."
+        ),
         outcome="fallback",
         diagnostic_code="RXTP-PANDAS-001",
-        guidance="Write exactly series.map(udf) on a plain annotated receiver name.",
+        guidance=(
+            "Write series.map(udf) or series.map(udf, na_action=None) on a plain "
+            "annotated receiver name."
+        ),
         stability="experimental",
     ),
     RuleRecord(
@@ -73,7 +99,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         diagnostic_code="RXTP-PANDAS-002",
         guidance=(
             "Annotate the mapper as float->float, float->bool, int->int, "
-            "int->float, or int->bool."
+            "int->float, int->bool, or bool->bool."
         ),
         stability="experimental",
     ),

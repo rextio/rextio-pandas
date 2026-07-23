@@ -316,7 +316,7 @@ def test_provider_does_not_declare_standalone_artifact_capability() -> None:
     assert not hasattr(RextioPandasPlugin, "artifact_capability")
 
 
-def test_public_authority_exposes_series_map_and_apply_no_go_only() -> None:
+def test_public_authority_exposes_series_map_and_conditional_apply_no_go_records() -> None:
     provider = RextioPandasPlugin()
     assert provider.covers().symbols == ("pandas.Series.map",)
 
@@ -332,9 +332,16 @@ def test_public_authority_exposes_series_map_and_apply_no_go_only() -> None:
     assert "prototype_dataframe_apply_helpers" not in rust_snippets.__all__
     assert not hasattr(rust_snippets, "prototype_dataframe_apply_helpers")
 
+    [conditional_no_go] = [record for record in records if "series-where-mask" in record.id]
+    assert conditional_no_go.outcome == "fallback"
+    assert conditional_no_go.verified is False
+    assert "alignment, casting, manager" in conditional_no_go.constraint
+    assert "empty" in conditional_no_go.constraint
+
     [signature] = [record for record in records if record.id.endswith("series-map-signature")]
     assert signature.guidance == (
-        "Annotate the mapper as float->float, float->bool, int->int, int->float, or int->bool."
+        "Annotate the mapper as float->float, float->bool, int->int, int->float, "
+        "int->bool, or bool->bool."
     )
 
 

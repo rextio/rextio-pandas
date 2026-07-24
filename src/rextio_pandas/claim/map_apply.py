@@ -87,8 +87,8 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
     if expr.kind == "unary":
         if expr.op == "not" and child_types == ("bool",) and expr.result_type == "bool":
             return BodyAudit(True, "bool")
-        if input_type != "float" or expr.op != "-" or child_types != ("float",):
-            return _fail("only unary negation of float64 values and boolean not are audited")
+        if expr.op != "-" or child_types != ("float",):
+            return _fail("only unary negation of float64 expressions and boolean not are audited")
         if expr.result_type != "float":
             return _fail("unary result type is inconsistent")
         return BodyAudit(True, "float")

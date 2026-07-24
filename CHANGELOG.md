@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add forged-lower regressions for every new result-dtype lane and a blocking
+  Core `0.1.6` source-integration job that runs both focused plugin tests and
+  the real-Cargo `Series.map` proof without replacing the released-Core matrix.
+- Audit unary negation of an already-audited float expression independently of
+  the receiver dtype, matching Core's real AST metadata for a `-0.0` literal in
+  the bounded `SeriesBool -> SeriesF64` conditional route.
 - Extend the closed result-dtype matrix for existing audited `Series.map`
   bodies: `SeriesF64 -> SeriesI64`, `SeriesBool -> SeriesI64`, and
   `SeriesBool -> SeriesF64` now accept only literal-safe numeric bodies and

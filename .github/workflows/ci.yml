@@ -51,3 +51,28 @@ jobs:
       - run: python -m pip install rextio==0.1.5 pandas==2.3.3 numpy==2.3.5 pytest
       - run: python -m pip install --no-deps -e .
       - run: python -m pytest tests/e2e/test_series_map_real_cargo.py
+
+  current-core-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: rextio/rextio
+          ref: "0.1.6"
+          path: rextio-core
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install ./rextio-core pandas==2.3.3 numpy==2.3.5 pytest
+      - run: python -m pip install --no-deps -e .
+      - run: >-
+          python -c "from rextio.plugins.api import PLUGIN_API_VERSION;
+          assert PLUGIN_API_VERSION == '1.6', PLUGIN_API_VERSION"
+      - run: >-
+          python -m pytest tests/test_plugin_contract.py tests/test_series_map.py
+          -m 'not needs_cargo'
+      - run: python -m pytest tests/e2e/test_series_map_real_cargo.py

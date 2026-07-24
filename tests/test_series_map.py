@@ -156,6 +156,43 @@ def invert_bool_body() -> CallableBodyExpr:
     )
 
 
+def f64_to_i64_body() -> CallableBodyExpr:
+    """Return an exact literal-safe float-to-int conditional."""
+    value = param("float")
+    return CallableBodyExpr(
+        kind="cond",
+        children=(
+            CallableBodyExpr(
+                kind="compare",
+                ops=(">",),
+                children=(value, literal("float", 0.0)),
+                result_type="bool",
+            ),
+            literal("int", 1),
+            literal("int", 0),
+        ),
+        result_type="int",
+    )
+
+
+def bool_to_i64_body() -> CallableBodyExpr:
+    """Return an exact literal-safe bool-to-int conditional."""
+    return CallableBodyExpr(
+        kind="cond",
+        children=(param("bool"), literal("int", 1), literal("int", 0)),
+        result_type="int",
+    )
+
+
+def bool_to_f64_body() -> CallableBodyExpr:
+    """Return a literal-safe bool-to-float conditional with signed zero."""
+    return CallableBodyExpr(
+        kind="cond",
+        children=(param("bool"), literal("float", -0.0), literal("float", 1.0)),
+        result_type="float",
+    )
+
+
 def test_claims_branchy_f64_and_i64_identity() -> None:
     assert PLUGIN.claim(
         site(SERIES_F64, meta(branchy_f64_body(), "float", "float")), CONFIG
@@ -248,6 +285,46 @@ def test_claims_bounded_series_bool_to_bool_map() -> None:
     )
     assert isinstance(rejected_ordering, Rejected)
     assert rejected_ordering.diagnostic.code == "RXTP-PANDAS-003"
+
+
+def test_claims_literal_safe_f64_and_bool_result_dtype_matrix() -> None:
+    assert PLUGIN.claim(
+        site(SERIES_F64, meta(f64_to_i64_body(), "float", "int")), CONFIG
+    ) == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_I64)
+    assert PLUGIN.claim(
+        site(SERIES_BOOL, meta(bool_to_i64_body(), "bool", "int")), CONFIG
+    ) == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_I64)
+    assert PLUGIN.claim(
+        site(SERIES_BOOL, meta(bool_to_f64_body(), "bool", "float")), CONFIG
+    ) == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_F64)
+
+
+def test_rejects_unproven_numeric_result_coercions() -> None:
+    float_passthrough_as_int = PLUGIN.claim(
+        site(SERIES_F64, meta(param("float"), "float", "int")), CONFIG
+    )
+    bool_arithmetic_as_int = PLUGIN.claim(
+        site(
+            SERIES_BOOL,
+            meta(
+                CallableBodyExpr(
+                    kind="binop",
+                    op="+",
+                    children=(param("bool"), literal("bool", True)),
+                    result_type="int",
+                ),
+                "bool",
+                "int",
+            ),
+        ),
+        CONFIG,
+    )
+    for result, code in (
+        (float_passthrough_as_int, "RXTP-PANDAS-002"),
+        (bool_arithmetic_as_int, "RXTP-PANDAS-003"),
+    ):
+        assert isinstance(result, Rejected)
+        assert result.diagnostic.code == code
 
 
 @pytest.mark.parametrize(
@@ -428,6 +505,45 @@ def test_lower_series_bool_map_uses_the_existing_pure_bool_loop() -> None:
     assert "output.push((!value));" in source
 
 
+@pytest.mark.parametrize(
+    ("receiver_type", "body", "return_type", "result_key", "input_rust", "output_rust"),
+    [
+        (SERIES_F64, f64_to_i64_body(), "int", SERIES_I64, "f64", "i64"),
+        (SERIES_BOOL, bool_to_i64_body(), "int", SERIES_I64, "bool", "i64"),
+        (SERIES_BOOL, bool_to_f64_body(), "float", SERIES_F64, "bool", "f64"),
+    ],
+)
+def test_lower_preserves_the_new_literal_safe_result_dtype_matrix(
+    receiver_type: str,
+    body: CallableBodyExpr,
+    return_type: str,
+    result_key: str,
+    input_rust: str,
+    output_rust: str,
+) -> None:
+    claimed = replace(
+        site(
+            receiver_type,
+            meta(body, {SERIES_F64: "float", SERIES_BOOL: "bool"}[receiver_type], return_type),
+        ),
+        rule_id=SERIES_MAP_RULE,
+        result_type=result_key,
+    )
+    lowered = PLUGIN.lower(
+        claimed,
+        LoweringContext(
+            operands=("mapper",),
+            receiver="series",
+            target_language="rust",
+            fresh_name=lambda prefix: f"{prefix}_0",
+        ),
+    )
+    source = "\n".join(lowered.helpers)
+    assert f"input: &numpy::ndarray::Array1<{input_rust}>" in source
+    assert f"numpy::ndarray::Array1<{output_rust}>" in source
+    assert lowered.rust.endswith("(py, &series)?")
+
+
 def test_lower_keeps_api_13_contexts_without_a_backend_field_on_pyo3() -> None:
     callable_meta = meta(branchy_f64_body(), "float", "float")
     claimed = ClaimSite(
@@ -592,9 +708,7 @@ def test_series_map_materializer_reuses_extraction_time_class_validation() -> No
 def test_series_boundary_derives_length_from_guarded_exact_numpy_array() -> None:
     source = boundary_helpers()
     boundary = source[
-        source.index("fn __rxtpd_series_parts") : source.index(
-            "fn __rxtpd_extract_series_f64"
-        )
+        source.index("fn __rxtpd_series_parts") : source.index("fn __rxtpd_extract_series_f64")
     ]
 
     assert "value.len()" not in boundary

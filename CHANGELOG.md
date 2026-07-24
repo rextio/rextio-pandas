@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Extend the closed result-dtype matrix for existing audited `Series.map`
+  bodies: `SeriesF64 -> SeriesI64`, `SeriesBool -> SeriesI64`, and
+  `SeriesBool -> SeriesF64` now accept only literal-safe numeric bodies and
+  conditional selections. This does not add coercion, arithmetic on bools,
+  nullable support, `where`/`mask`, binary-Series operations, or DataFrame
+  routes.
 - Promote exact non-nullable `SeriesBool -> SeriesBool` mapping through the
   existing pinned `Series.map` authority and materialized bool boundary. The
   boolean mapper grammar is limited to bool parameters/literals, `not`,

@@ -98,8 +98,9 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         outcome="fallback",
         diagnostic_code="RXTP-PANDAS-002",
         guidance=(
-            "Annotate the mapper as float->float, float->bool, int->int, "
-            "int->float, int->bool, or bool->bool."
+            "Annotate the mapper as float->float/int/bool, int->int/float/bool, "
+            "or bool->bool/int/float; numeric results from float/bool inputs must "
+            "remain literal-safe within the documented closed body grammar."
         ),
         stability="experimental",
     ),

@@ -60,6 +60,18 @@ def invert_bool(value: bool) -> bool:
     return not value
 
 
+def classify_f64(value: float) -> int:
+    return 1 if value > 0.0 else 0
+
+
+def bool_to_i64(value: bool) -> int:
+    return 1 if value else 0
+
+
+def bool_to_f64(value: bool) -> float:
+    return -0.0 if value else 1.0
+
+
 def map_f64(series: SeriesF64) -> SeriesF64:
     return series.map(branch_f64)
 
@@ -82,6 +94,18 @@ def map_i64_to_f64(series: SeriesI64) -> SeriesF64:
 
 def map_bool(series: SeriesBool) -> SeriesBool:
     return series.map(invert_bool)
+
+
+def map_f64_to_i64(series: SeriesF64) -> SeriesI64:
+    return series.map(classify_f64)
+
+
+def map_bool_to_i64(series: SeriesBool) -> SeriesI64:
+    return series.map(bool_to_i64)
+
+
+def map_bool_to_f64(series: SeriesBool) -> SeriesF64:
+    return series.map(bool_to_f64)
 
 
 def map_two_stage_to_bool(series: SeriesF64) -> SeriesBool:
@@ -184,6 +208,9 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
         "map_i64",
         "map_i64_to_f64",
         "map_bool",
+        "map_f64_to_i64",
+        "map_bool_to_i64",
+        "map_bool_to_f64",
         "map_two_stage_to_bool",
         "map_four_stage_to_bool",
         "map_predicate_then_invert",
@@ -199,8 +226,8 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
     rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
         encoding="utf-8"
     )
-    assert rust.count("fn __rxtpd_map_values_") == 8
-    assert rust.count("py.detach(|| __rxtpd_map_values_") == 8
+    assert rust.count("fn __rxtpd_map_values_") == 11
+    assert rust.count("py.detach(|| __rxtpd_map_values_") == 11
     assert rust.count("struct RxtPandasSeriesF64") == 1
     for body in rust.split("fn __rxtpd_map_values_")[1:]:
         hot = body.split("fn __rxtpd_map_series_", 1)[0]
@@ -251,6 +278,46 @@ def test_chained_maps_extract_once_and_materialize_only_the_bool_result(
     assert_series_equal(bool_result, ~bool_source, check_exact=True)
 
 
+@pytest.mark.parametrize(
+    ("name", "source", "dtype"),
+    [
+        (
+            "map_f64_to_i64",
+            pd.Series([-math.inf, -0.0, 0.0, math.nan, math.inf], dtype="float64", name="f64"),
+            np.dtype("int64"),
+        ),
+        (
+            "map_bool_to_i64",
+            pd.Series([True, False, True, False], dtype="bool", name="flags"),
+            np.dtype("int64"),
+        ),
+        (
+            "map_bool_to_f64",
+            pd.Series([True, False, True, False], dtype="bool", name="flags"),
+            np.dtype("float64"),
+        ),
+    ],
+)
+def test_native_literal_safe_result_dtype_matrix_matches_pandas_exactly(
+    project: CertifiedProject,
+    name: str,
+    source: pd.Series,
+    dtype: np.dtype,
+) -> None:
+    result = project.equivalence_checker(
+        f"pandas_app.kernels.{name}",
+        equals=_series_equal,
+    )(source)
+    assert type(result) is pd.Series
+    assert result.dtype == dtype
+    assert result.name == source.name
+    assert result.index.equals(source.index)
+    assert result.attrs == source.attrs
+    if dtype == np.dtype("float64"):
+        expected_bits = np.array([-0.0, 1.0, -0.0, 1.0], dtype=np.float64).view(np.uint64)
+        assert np.array_equal(result.to_numpy().view(np.uint64), expected_bits)
+
+
 def test_parameter_probe_and_identity_map_product_use_real_boundary_support(
     project: CertifiedProject,
 ) -> None:
@@ -295,6 +362,18 @@ def test_parameter_probe_and_identity_map_product_use_real_boundary_support(
         (
             "map_bool",
             pd.Series([True, False, False, True], dtype="bool", name="flags"),
+        ),
+        (
+            "map_f64_to_i64",
+            pd.Series([-math.inf, -0.0, 0.0, math.nan, math.inf], dtype="float64", name="f64"),
+        ),
+        (
+            "map_bool_to_i64",
+            pd.Series([True, False, True, False], dtype="bool", name="flags"),
+        ),
+        (
+            "map_bool_to_f64",
+            pd.Series([True, False, True, False], dtype="bool", name="flags"),
         ),
         (
             "map_two_stage_to_bool",

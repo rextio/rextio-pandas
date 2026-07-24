@@ -36,6 +36,17 @@ _SCALAR_BY_SERIES = {
     SERIES_F64: "float",
     SERIES_I64: "int",
 }
+_ALLOWED_RETURNS = {
+    # A bool parameter can only reach numeric output through finite literals
+    # selected by an audited conditional; it cannot be coerced or used in
+    # arithmetic by this grammar.
+    "bool": frozenset({"bool", "int", "float"}),
+    # A float parameter can only reach int output through audited i64 literals
+    # and conditionals. The grammar has no float-to-int coercion or arithmetic
+    # that produces an int.
+    "float": frozenset({"float", "int", "bool"}),
+    "int": frozenset({"int", "float", "bool"}),
+}
 
 
 @dataclass(frozen=True)
@@ -76,8 +87,8 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
     if expr.kind == "unary":
         if expr.op == "not" and child_types == ("bool",) and expr.result_type == "bool":
             return BodyAudit(True, "bool")
-        if input_type != "float" or expr.op != "-" or child_types != ("float",):
-            return _fail("only unary negation of float64 values and boolean not are audited")
+        if expr.op != "-" or child_types != ("float",):
+            return _fail("only unary negation of float64 expressions and boolean not are audited")
         if expr.result_type != "float":
             return _fail("unary result type is inconsistent")
         return BodyAudit(True, "float")
@@ -135,11 +146,7 @@ def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     param = meta.params[0]
     if param.param_type != input_type:
         return _fail(f"the mapper parameter must be annotated {input_type}")
-    allowed_returns = {
-        "bool": {"bool"},
-        "float": {"float", "bool"},
-        "int": {"int", "float", "bool"},
-    }[input_type]
+    allowed_returns = _ALLOWED_RETURNS[input_type]
     if meta.return_type not in allowed_returns:
         return _fail("the mapper return annotation is outside the supported scalar matrix")
     if meta.runtime_semantics:

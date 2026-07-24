@@ -42,7 +42,7 @@ PyPI package: `rextio-pandas`.
 The implemented source form is exactly:
 
 ```python
-from rextio_pandas.types import SeriesBool, SeriesF64
+from rextio_pandas.types import SeriesBool, SeriesF64, SeriesI64
 
 def transform(value: float) -> float:
     return value * 2.0 if value > 0.0 else -value
@@ -53,19 +53,36 @@ def is_positive(value: float) -> bool:
 def invert(value: bool) -> bool:
     return not value
 
+def bucket(value: float) -> int:
+    return 1 if value > 0.0 else 0
+
+def flag_to_float(flag: bool) -> float:
+    return 1.0 if flag else 0.0
+
 def run(series: SeriesF64) -> SeriesBool:
     transformed = series.map(transform, na_action=None)
     positive = transformed.map(is_positive)
     return positive.map(invert)
+
+def classify(series: SeriesF64) -> SeriesI64:
+    return series.map(bucket)
+
+def bool_numeric(series: SeriesBool) -> SeriesF64:
+    return series.map(flag_to_float)
 ```
 
 `SeriesI64` is the corresponding non-nullable NumPy `int64` input spelling;
 `SeriesBool` is the exact NumPy `bool` spelling for numeric predicate results
 and the bounded boolean mapper input. Boolean receivers support only
 `bool -> bool` mappers composed from the parameter, bool literals, `not`,
-`and`/`or`, equality/inequality, and boolean conditional branches. An
-`int -> int` UDF is limited to full-domain-safe identity/literal/comparison/
-boolean/conditional bodies; an `int -> float` conditional is also supported.
+`and`/`or`, equality/inequality, and boolean conditional branches; they may
+also select exact `int64` or finite `float64` literals through a conditional
+(`bool -> int` / `bool -> float`). An `int -> int` UDF is limited to
+full-domain-safe identity/literal/comparison/boolean/conditional bodies; an
+`int -> float` conditional is also supported. A float receiver may likewise
+select exact `int64` literals through an audited conditional (`float -> int`),
+but this grammar has no float-to-int coercion. All numeric literals are frozen
+finite scalar literals; integer literals are restricted to signed `int64`.
 `SeriesF64` supports finite float literals, unary negation, same-type
 comparisons, boolean literals/composition/`not`, boolean conditional
 expressions, and audited `+`/`-`/`*`. A native symbol never bypasses this body
@@ -112,7 +129,8 @@ method="map")`. The normal source-carrying path does not repeat validation at
 materialization. CPython `-O` (`optimize=1`) has a separately frozen
 `NDFrame.__finalize__` digest; `-OO` is intentionally unsupported and fails
 closed. The successful result preserves exact Series class, dtype (including
-exact NumPy `bool` predicate results), values (including NaN/Inf/signed zero),
+exact NumPy `bool` predicate results and exact `int64`/`float64` conditional
+result dtypes), values (including NaN/Inf/signed zero),
 order, RangeIndex, name, and default metadata.
 
 All three materialized Series types own the shared Rust boundary support through

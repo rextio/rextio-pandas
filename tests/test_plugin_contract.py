@@ -340,8 +340,9 @@ def test_public_authority_exposes_series_map_and_conditional_apply_no_go_records
 
     [signature] = [record for record in records if record.id.endswith("series-map-signature")]
     assert signature.guidance == (
-        "Annotate the mapper as float->float, float->bool, int->int, int->float, "
-        "int->bool, or bool->bool."
+        "Annotate the mapper as float->float/int/bool, int->int/float/bool, or "
+        "bool->bool/int/float; numeric results from float/bool inputs must remain "
+        "literal-safe within the documented closed body grammar."
     )
 
 

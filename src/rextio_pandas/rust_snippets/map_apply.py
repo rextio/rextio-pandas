@@ -8,13 +8,14 @@ from typing import TypedDict
 
 from rextio.plugins.api import CallableBodyExpr, CallableMeta, SchemaMeta
 
-from rextio_pandas.diagnostics import RUNTIME_ERRORS, SERIES_F64, SERIES_I64
+from rextio_pandas.diagnostics import RUNTIME_ERRORS, SERIES_BOOL, SERIES_F64, SERIES_I64
 
 _STRUCT = {
+    SERIES_BOOL: "RxtPandasSeriesBool",
     SERIES_F64: "RxtPandasSeriesF64",
     SERIES_I64: "RxtPandasSeriesI64",
 }
-_RUST_SCALAR = {SERIES_F64: "f64", SERIES_I64: "i64"}
+_RUST_SCALAR = {SERIES_BOOL: "bool", SERIES_F64: "f64", SERIES_I64: "i64"}
 
 PINNED_PANDAS_VERSION = "2.3.3"
 PINNED_NUMPY_VERSION = "2.3.5"
@@ -1290,6 +1291,11 @@ struct RxtPandasSeriesI64 {{
     source: Option<pyo3::Py<pyo3::PyAny>>,
 }}
 
+struct RxtPandasSeriesBool {{
+    values: numpy::ndarray::Array1<bool>,
+    source: Option<pyo3::Py<pyo3::PyAny>>,
+}}
+
 struct RxtPandasFrameF64 {{
     values: numpy::ndarray::Array2<f64>,
     columns: Vec<String>,
@@ -1465,12 +1471,19 @@ fn __rxtpd_pinned_frame_class<'py>(
     Ok(frame_class)
 }}
 
-fn __rxtpd_series_parts<'py>(
+fn __rxtpd_series_parts<'py, T>(
     py: pyo3::Python<'py>,
     value: &pyo3::Bound<'py, pyo3::PyAny>,
     expected_dtype: &str,
     dtype_error: &'static str,
-) -> pyo3::PyResult<(pyo3::Py<pyo3::PyAny>, pyo3::Bound<'py, pyo3::PyAny>)> {{
+) -> pyo3::PyResult<(
+    pyo3::Py<pyo3::PyAny>,
+    pyo3::Bound<'py, numpy::PyArray1<T>>,
+)>
+where
+    T: numpy::Element,
+{{
+    use numpy::PyArrayMethods;
     use pyo3::types::{{PyAnyMethods, PyDict, PyDictMethods, PyString}};
     let series_class = __rxtpd_pinned_series_class(py)?;
     let series_type = series_class.cast::<pyo3::types::PyType>()?;
@@ -1483,10 +1496,6 @@ fn __rxtpd_series_parts<'py>(
         || instance_dict.contains("to_numpy")?
     {{
         return Err(__rxtpd_type_error({error["series_method"]}));
-    }}
-    let length = value.len()?;
-    if length == 0 {{
-        return Err(__rxtpd_type_error({error["series_empty"]}));
     }}
     if value.getattr("attrs")?.len()? != 0 {{
         return Err(__rxtpd_type_error({error["series_attrs"]}));
@@ -1509,7 +1518,6 @@ fn __rxtpd_series_parts<'py>(
     let stop: isize = index.getattr("stop")?.extract()?;
     let step: isize = index.getattr("step")?.extract()?;
     if start != 0
-        || stop != length as isize
         || step != 1
         || !index.getattr("name")?.is_none()
     {{
@@ -1527,7 +1535,19 @@ fn __rxtpd_series_parts<'py>(
     let kwargs = PyDict::new(py);
     kwargs.set_item("copy", false)?;
     let array = to_numpy.call((value,), Some(&kwargs))?;
-    Ok((value.clone().unbind(), array))
+    let typed = array
+        .cast_into::<numpy::PyArray1<T>>()
+        .map_err(|_| __rxtpd_type_error(dtype_error))?;
+    // Derive shape from the exact guarded ndarray, never from mutable
+    // ``pandas.Series.__len__`` dispatch that ordinary Series.map does not use.
+    let length = typed.readonly().as_array().len();
+    if length == 0 {{
+        return Err(__rxtpd_type_error({error["series_empty"]}));
+    }}
+    if stop != length as isize {{
+        return Err(__rxtpd_type_error({error["series_index"]}));
+    }}
+    Ok((value.clone().unbind(), typed))
 }}
 
 fn __rxtpd_extract_series_f64<'py>(
@@ -1535,10 +1555,8 @@ fn __rxtpd_extract_series_f64<'py>(
     value: &pyo3::Bound<'py, pyo3::PyAny>,
 ) -> pyo3::PyResult<RxtPandasSeriesF64> {{
     use numpy::PyArrayMethods;
-    let (source, array) = __rxtpd_series_parts(py, value, "float64", {error["series_f64"]})?;
-    let typed = array
-        .cast::<numpy::PyArray1<f64>>()
-        .map_err(|_| __rxtpd_type_error({error["series_f64"]}))?;
+    let (source, typed) =
+        __rxtpd_series_parts::<f64>(py, value, "float64", {error["series_f64"]})?;
     let values = typed.readonly().as_array().to_owned();
     Ok(RxtPandasSeriesF64 {{
         values,
@@ -1551,12 +1569,24 @@ fn __rxtpd_extract_series_i64<'py>(
     value: &pyo3::Bound<'py, pyo3::PyAny>,
 ) -> pyo3::PyResult<RxtPandasSeriesI64> {{
     use numpy::PyArrayMethods;
-    let (source, array) = __rxtpd_series_parts(py, value, "int64", {error["series_i64"]})?;
-    let typed = array
-        .cast::<numpy::PyArray1<i64>>()
-        .map_err(|_| __rxtpd_type_error({error["series_i64"]}))?;
+    let (source, typed) =
+        __rxtpd_series_parts::<i64>(py, value, "int64", {error["series_i64"]})?;
     let values = typed.readonly().as_array().to_owned();
     Ok(RxtPandasSeriesI64 {{
+        values,
+        source: Some(source),
+    }})
+}}
+
+fn __rxtpd_extract_series_bool<'py>(
+    py: pyo3::Python<'py>,
+    value: &pyo3::Bound<'py, pyo3::PyAny>,
+) -> pyo3::PyResult<RxtPandasSeriesBool> {{
+    use numpy::PyArrayMethods;
+    let (source, typed) =
+        __rxtpd_series_parts::<bool>(py, value, "bool", {error["series_bool"]})?;
+    let values = typed.readonly().as_array().to_owned();
+    Ok(RxtPandasSeriesBool {{
         values,
         source: Some(source),
     }})
@@ -1677,6 +1707,15 @@ impl RxtPandasMaterializedSeries for RxtPandasSeriesI64 {{
     }}
 }}
 
+impl RxtPandasMaterializedSeries for RxtPandasSeriesBool {{
+    type Elem = bool;
+    fn into_parts(
+        self,
+    ) -> (numpy::ndarray::Array1<bool>, Option<pyo3::Py<pyo3::PyAny>>) {{
+        (self.values, self.source)
+    }}
+}}
+
 fn __rxtpd_materialize_series<'py, T>(
     py: pyo3::Python<'py>,
     value: T,
@@ -1732,6 +1771,8 @@ def _literal(expr: CallableBodyExpr) -> str:
         if value == 2**63 - 1:
             return "i64::MAX"
         return f"{value}_i64"
+    if literal.kind == "bool":
+        return "true" if literal.value is True else "false"
     raise ValueError(f"unsupported audited literal kind: {literal.kind}")
 
 
@@ -1741,6 +1782,8 @@ def _render_expr(expr: CallableBodyExpr) -> str:
     if expr.kind == "literal":
         return _literal(expr)
     if expr.kind == "unary":
+        if expr.op == "not":
+            return f"(!{_render_expr(expr.children[0])})"
         return f"(-{_render_expr(expr.children[0])})"
     if expr.kind == "binop":
         left, right = expr.children

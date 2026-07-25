@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.1.2 (2026-07-26)
+
+Public Alpha release on PyPI. This release expands only the audited
+`Series.map` result and conditional matrix; `Series.where`, `Series.mask`, and
+`DataFrame.apply(axis=1)` remain ordinary Python fallback.
+
+- Add forged-lower regressions for every new result-dtype lane and a blocking
+  public **`rextio==0.1.6`** release lane that runs both focused plugin tests
+  and the real-Cargo `Series.map` proof without replacing the older released-
+  Core compatibility matrix.
+- Audit unary negation of an already-audited float expression independently of
+  the receiver dtype, matching Core's real AST metadata for a `-0.0` literal in
+  the bounded `SeriesBool -> SeriesF64` conditional route.
+- Extend the closed result-dtype matrix for existing audited `Series.map`
+  bodies: `SeriesF64 -> SeriesI64`, `SeriesBool -> SeriesI64`, and
+  `SeriesBool -> SeriesF64` now accept only literal-safe numeric bodies and
+  conditional selections. This does not add coercion, arithmetic on bools,
+  nullable support, `where`/`mask`, binary-Series operations, or DataFrame
+  routes.
+- Promote exact non-nullable `SeriesBool -> SeriesBool` mapping through the
+  existing pinned `Series.map` authority and materialized bool boundary. The
+  boolean mapper grammar is limited to bool parameters/literals, `not`,
+  `and`/`or`, equality/inequality, and bool conditional branches.
+- Keep `Series.where` and `Series.mask` as explicit fallback. Core can represent
+  a narrow bool-condition/same-dtype-scalar shape, but the plugin has not frozen
+  the reachable pandas where/mask alignment and casting authority graph; the
+  shared empty-Series boundary also cannot be relaxed without changing
+  type-changing empty `Series.map` semantics.
+- Accept explicit literal `na_action=None` as exactly equivalent to the omitted
+  `Series.map` default. `"ignore"`, dynamic values, duplicate/unknown keywords,
+  and keyword mapper forms remain fail-closed fallback.
+- Derive Series length from the guarded exact NumPy ndarray rather than
+  `pandas.Series.__len__`, preserving native/fallback behavior when unrelated
+  Series length dispatch is monkeypatched.
+- Add blocking real-Cargo CI on Core 0.1.5 and certify the parameter-only
+  `SeriesBool` boundary for exact NumPy bool input plus fail-closed nullable
+  BooleanDtype rejection.
+- Label the retained 2026-07-16 benchmark as historical evidence for its
+  single-stage `SeriesF64 -> SeriesF64` reference case only; it is not a new
+  Bool/pipeline speed claim.
+- Add the exact NumPy-backed `SeriesBool` result boundary for audited numeric
+  `Series.map` predicates. Inputs remain exact non-nullable `SeriesF64` or
+  `SeriesI64`; nullable BooleanDtype, object/categorical/Arrow storage, empty
+  Series, and noncanonical indexes remain unsupported.
+- Extend the audited mapper grammar only where Core callable metadata is exact:
+  bool literals, boolean `not`, `and`/`or`, comparisons, and boolean
+  conditional branches. `Series.map` can therefore compose through two or four
+  native stages, including `SeriesF64 -> SeriesF64 -> SeriesBool`, with one
+  source extraction, Rust intermediate values, and one final pandas materialization.
+- Defer the unused DataFrame prototype helper cleanup. `DataFrame.apply(axis=1)`
+  remains an explicit NO-GO and ordinary Python fallback.
+- Restore compatibility with Core 0.1.5 / plugin API 1.4 while continuing to
+  declare provider API 1.3 and require `rextio>=0.1.3,<0.2`.
+- Keep the current Core loader as the primary compatibility authority, with
+  the same fail-closed guard on every provider entry method so older loaders
+  that checked only the major cannot admit Core API 1.2. The benchmark and
+  clean-environment proof require the same API major and a minor of at least 3.
+- Reject standalone/non-PyO3 lowering explicitly. This provider does not
+  declare an artifact capability.
+- Keep the NO-GO `DataFrame.apply` warning characterization bounded to the two
+  exact NumPy 2.3.5 platform observations: scalar remainder is silent on
+  macOS arm64 and emits four `RuntimeWarning`s on Linux x86_64.
+
 ## 0.1.0 (2026-07-17)
 
 First **public alpha** release of `rextio-pandas` (PyPI package `rextio-pandas`,

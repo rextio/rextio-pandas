@@ -7,11 +7,12 @@ from rextio.plugins.api import ClaimSite, Rejected
 
 SERIES_F64 = "rextio-pandas/series-f64"
 SERIES_I64 = "rextio-pandas/series-i64"
+SERIES_BOOL = "rextio-pandas/series-bool"
 # Research-only key used by characterization fixtures. It is deliberately not
 # registered in the plugin type vocabulary and cannot reach claim/lower.
 PROTOTYPE_FRAME_F64 = "rextio-pandas/prototype-frame-f64"
 
-SERIES_TYPES = frozenset({SERIES_F64, SERIES_I64})
+SERIES_TYPES = frozenset({SERIES_F64, SERIES_I64, SERIES_BOOL})
 
 DIAGNOSTIC_SHAPE = "RXTP-PANDAS-001"
 DIAGNOSTIC_SIGNATURE = "RXTP-PANDAS-002"
@@ -41,6 +42,9 @@ RUNTIME_ERRORS = {
     ),
     "series_i64": (
         "rextio-pandas SeriesI64 contract requires non-nullable NumPy-backed int64 storage"
+    ),
+    "series_bool": (
+        "rextio-pandas SeriesBool contract requires non-nullable NumPy-backed bool storage"
     ),
     # Retained only by the unregistered DataFrame research prototype. No public
     # claim/lower path emits these errors.
@@ -94,6 +98,7 @@ __all__ = [
     "RUNTIME_ERRORS",
     "SERIES_F64",
     "SERIES_I64",
+    "SERIES_BOOL",
     "SERIES_TYPES",
     "reject",
 ]

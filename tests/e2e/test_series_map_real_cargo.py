@@ -25,7 +25,7 @@ pytestmark = [
 ]
 
 KERNELS = """
-from rextio_pandas.types import SeriesF64, SeriesI64
+from rextio_pandas.types import SeriesBool, SeriesF64, SeriesI64
 
 
 def branch_f64(value: float) -> float:
@@ -44,6 +44,34 @@ def classify_i64(value: int) -> float:
     return 1.5 if value >= 0 else 2.5
 
 
+def scale(value: float) -> float:
+    return value * 2.0
+
+
+def shift(value: float) -> float:
+    return value + 1.0
+
+
+def predicate(value: float) -> bool:
+    return (value > 0.0 and not value == 7.0) or False
+
+
+def invert_bool(value: bool) -> bool:
+    return not value
+
+
+def classify_f64(value: float) -> int:
+    return 1 if value > 0.0 else 0
+
+
+def bool_to_i64(value: bool) -> int:
+    return 1 if value else 0
+
+
+def bool_to_f64(value: bool) -> float:
+    return -0.0 if value else 1.0
+
+
 def map_f64(series: SeriesF64) -> SeriesF64:
     return series.map(branch_f64)
 
@@ -52,12 +80,49 @@ def map_f64_identity(series: SeriesF64) -> SeriesF64:
     return series.map(identity_f64)
 
 
+def map_f64_explicit_none(series: SeriesF64) -> SeriesF64:
+    return series.map(identity_f64, na_action=None)
+
+
 def map_i64(series: SeriesI64) -> SeriesI64:
     return series.map(identity_i64)
 
 
 def map_i64_to_f64(series: SeriesI64) -> SeriesF64:
     return series.map(classify_i64)
+
+
+def map_bool(series: SeriesBool) -> SeriesBool:
+    return series.map(invert_bool)
+
+
+def map_f64_to_i64(series: SeriesF64) -> SeriesI64:
+    return series.map(classify_f64)
+
+
+def map_bool_to_i64(series: SeriesBool) -> SeriesI64:
+    return series.map(bool_to_i64)
+
+
+def map_bool_to_f64(series: SeriesBool) -> SeriesF64:
+    return series.map(bool_to_f64)
+
+
+def map_two_stage_to_bool(series: SeriesF64) -> SeriesBool:
+    scaled = series.map(scale)
+    return scaled.map(predicate)
+
+
+def map_four_stage_to_bool(series: SeriesF64) -> SeriesBool:
+    first = series.map(scale)
+    second = first.map(shift)
+    third = second.map(scale)
+    return third.map(predicate)
+
+
+def map_predicate_then_invert(series: SeriesF64) -> SeriesBool:
+    flags = series.map(predicate)
+    return flags.map(invert_bool)
 
 
 def parameter_signature_probe(series: SeriesF64) -> float:
@@ -69,11 +134,15 @@ def identity_map_roundtrip(series: SeriesF64) -> SeriesF64:
 """
 
 CLAIMLESS_KERNELS = """
-from rextio_pandas.types import SeriesF64
+from rextio_pandas.types import SeriesBool, SeriesF64
 
 
 def inspect_series(series: SeriesF64) -> float:
     return 1.0
+
+
+def inspect_bool(series: SeriesBool) -> float:
+    return 2.0
 """
 
 
@@ -135,8 +204,16 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
     for name in (
         "map_f64",
         "map_f64_identity",
+        "map_f64_explicit_none",
         "map_i64",
         "map_i64_to_f64",
+        "map_bool",
+        "map_f64_to_i64",
+        "map_bool_to_i64",
+        "map_bool_to_f64",
+        "map_two_stage_to_bool",
+        "map_four_stage_to_bool",
+        "map_predicate_then_invert",
         "parameter_signature_probe",
         "identity_map_roundtrip",
     ):
@@ -149,8 +226,8 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
     rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
         encoding="utf-8"
     )
-    assert rust.count("fn __rxtpd_map_values_") == 4
-    assert rust.count("py.detach(|| __rxtpd_map_values_") == 4
+    assert rust.count("fn __rxtpd_map_values_") == 11
+    assert rust.count("py.detach(|| __rxtpd_map_values_") == 11
     assert rust.count("struct RxtPandasSeriesF64") == 1
     for body in rust.split("fn __rxtpd_map_values_")[1:]:
         hot = body.split("fn __rxtpd_map_series_", 1)[0]
@@ -159,6 +236,86 @@ def test_report_and_generated_hot_loops_are_real_native_route(project: Certified
         assert "Python::attach" not in hot
         assert "Python::with_gil" not in hot
         assert ".call" not in hot
+
+
+def test_chained_maps_extract_once_and_materialize_only_the_bool_result(
+    project: CertifiedProject,
+) -> None:
+    rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
+        encoding="utf-8"
+    )
+    for name, stages in (
+        ("map_two_stage_to_bool", 2),
+        ("map_four_stage_to_bool", 4),
+        ("map_predicate_then_invert", 2),
+    ):
+        start = rust.index(f"fn pandas_app__kernels__{name}")
+        function = rust[start : rust.index("\n#[pyfunction]", start + 1)]
+        assert function.count("__rxtpd_extract_series_f64(py, &series)?") == 1
+        assert function.count("__rxtpd_map_series_") == stages
+        assert function.count("__rxtpd_materialize_series(py,") == 1
+
+    source = pd.Series([-2.0, 0.0, 1.0, 3.5], dtype="float64", name="chain")
+    for name in (
+        "map_two_stage_to_bool",
+        "map_four_stage_to_bool",
+        "map_predicate_then_invert",
+    ):
+        result = project.equivalence_checker(
+            f"pandas_app.kernels.{name}",
+            equals=_series_equal,
+        )(source)
+        assert result.dtype == np.dtype("bool")
+        assert result.name == source.name
+        assert result.index.equals(source.index)
+        assert result.attrs == source.attrs
+
+    bool_source = pd.Series([True, False, False, True], dtype="bool", name="flags")
+    bool_result = project.equivalence_checker(
+        "pandas_app.kernels.map_bool",
+        equals=_series_equal,
+    )(bool_source)
+    assert_series_equal(bool_result, ~bool_source, check_exact=True)
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "dtype"),
+    [
+        (
+            "map_f64_to_i64",
+            pd.Series([-math.inf, -0.0, 0.0, math.nan, math.inf], dtype="float64", name="f64"),
+            np.dtype("int64"),
+        ),
+        (
+            "map_bool_to_i64",
+            pd.Series([True, False, True, False], dtype="bool", name="flags"),
+            np.dtype("int64"),
+        ),
+        (
+            "map_bool_to_f64",
+            pd.Series([True, False, True, False], dtype="bool", name="flags"),
+            np.dtype("float64"),
+        ),
+    ],
+)
+def test_native_literal_safe_result_dtype_matrix_matches_pandas_exactly(
+    project: CertifiedProject,
+    name: str,
+    source: pd.Series,
+    dtype: np.dtype,
+) -> None:
+    result = project.equivalence_checker(
+        f"pandas_app.kernels.{name}",
+        equals=_series_equal,
+    )(source)
+    assert type(result) is pd.Series
+    assert result.dtype == dtype
+    assert result.name == source.name
+    assert result.index.equals(source.index)
+    assert result.attrs == source.attrs
+    if dtype == np.dtype("float64"):
+        expected_bits = np.array([-0.0, 1.0, -0.0, 1.0], dtype=np.float64).view(np.uint64)
+        assert np.array_equal(result.to_numpy().view(np.uint64), expected_bits)
 
 
 def test_parameter_probe_and_identity_map_product_use_real_boundary_support(
@@ -190,6 +347,10 @@ def test_parameter_probe_and_identity_map_product_use_real_boundary_support(
         ),
         ("map_f64_identity", pd.Series([1.0], dtype="float64", name=None)),
         (
+            "map_f64_explicit_none",
+            pd.Series([-0.0, math.nan, math.inf], dtype="float64", name="explicit-none"),
+        ),
+        (
             "map_i64",
             pd.Series(
                 [np.iinfo(np.int64).min, -1, 0, 1, np.iinfo(np.int64).max],
@@ -198,6 +359,34 @@ def test_parameter_probe_and_identity_map_product_use_real_boundary_support(
             ),
         ),
         ("map_i64_to_f64", pd.Series([-2, 0, 3], dtype="int64", name="classes")),
+        (
+            "map_bool",
+            pd.Series([True, False, False, True], dtype="bool", name="flags"),
+        ),
+        (
+            "map_f64_to_i64",
+            pd.Series([-math.inf, -0.0, 0.0, math.nan, math.inf], dtype="float64", name="f64"),
+        ),
+        (
+            "map_bool_to_i64",
+            pd.Series([True, False, True, False], dtype="bool", name="flags"),
+        ),
+        (
+            "map_bool_to_f64",
+            pd.Series([True, False, True, False], dtype="bool", name="flags"),
+        ),
+        (
+            "map_two_stage_to_bool",
+            pd.Series([-2.0, 0.0, 1.0, 3.5], dtype="float64", name="predicate"),
+        ),
+        (
+            "map_predicate_then_invert",
+            pd.Series([-2.0, 0.0, 1.0, 3.5], dtype="float64", name="predicate"),
+        ),
+        (
+            "map_four_stage_to_bool",
+            pd.Series([-2.0, 0.0, 1.0, 3.5], dtype="float64", name="predicate"),
+        ),
     ],
 )
 def test_native_equals_exact_original_pandas_call(
@@ -270,22 +459,32 @@ def test_claimless_only_parameter_signature_builds_and_executes_boundary_support
         for module in check["modules"]
         for function in module["functions"]
     }
-    assert set(functions) == {"pandas_claimless.kernels.inspect_series"}
+    assert set(functions) == {
+        "pandas_claimless.kernels.inspect_bool",
+        "pandas_claimless.kernels.inspect_series",
+    }
     record = functions["pandas_claimless.kernels.inspect_series"]
     assert record["native_status"] == "accepted"
     assert record["route"] == "native-plugin:rextio-pandas"
     assert record["plugin_claims"] == []
+    bool_record = functions["pandas_claimless.kernels.inspect_bool"]
+    assert bool_record["native_status"] == "accepted"
+    assert bool_record["route"] == "native-plugin:rextio-pandas"
+    assert bool_record["plugin_claims"] == []
 
     build = json.loads((reports / "build.json").read_text(encoding="utf-8"))
     assert build["status"] == "built"
-    assert build["accepted_native_count"] == 1
+    assert build["accepted_native_count"] == 2
 
     rust = (
         claimless_project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs"
     ).read_text(encoding="utf-8")
     assert rust.count("struct RxtPandasSeriesF64") == 1
+    assert rust.count("struct RxtPandasSeriesBool") == 1
     assert rust.count("fn __rxtpd_extract_series_f64") == 1
+    assert rust.count("fn __rxtpd_extract_series_bool") == 1
     assert "let series = __rxtpd_extract_series_f64(py, &series)?;" in rust
+    assert "let series = __rxtpd_extract_series_bool(py, &series)?;" in rust
     assert "fn __rxtpd_map_values_" not in rust
 
     valid = _run_fresh(
@@ -319,6 +518,40 @@ else:
     assert rejected.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_empty"]]
 
 
+def test_claimless_series_bool_boundary_accepts_numpy_bool_and_rejects_nullable_bool(
+    claimless_project: CertifiedProject,
+) -> None:
+    valid = _run_fresh(
+        claimless_project,
+        "native",
+        """
+import pandas as pd
+from pandas_claimless.kernels import inspect_bool
+print(inspect_bool(pd.Series([True, False], dtype="bool")))
+""",
+    )
+    assert valid.returncode == 0, valid.stderr
+    assert valid.stdout.strip() == "2.0"
+
+    rejected = _run_fresh(
+        claimless_project,
+        "native",
+        """
+import pandas as pd
+from pandas_claimless.kernels import inspect_bool
+try:
+    inspect_bool(pd.Series([True, False], dtype="boolean"))
+except Exception as exc:
+    print(type(exc).__name__)
+    print(str(exc))
+else:
+    raise SystemExit("nullable BooleanDtype was accepted")
+""",
+    )
+    assert rejected.returncode == 0, rejected.stderr
+    assert rejected.stdout.splitlines() == ["TypeError", RUNTIME_ERRORS["series_bool"]]
+
+
 def test_native_and_fallback_run_in_fresh_processes(project: CertifiedProject) -> None:
     body = """
 import json
@@ -339,6 +572,37 @@ print(json.dumps({
 """
     native = _run_fresh(project, "native", body)
     fallback = _run_fresh(project, "fallback", body)
+    assert native.returncode == 0, native.stderr
+    assert fallback.returncode == 0, fallback.stderr
+    assert json.loads(native.stdout) == json.loads(fallback.stdout)
+
+
+def test_series_len_monkeypatch_does_not_change_native_map_semantics(
+    project: CertifiedProject,
+) -> None:
+    body = """
+import json
+import pandas as pd
+from pandas_app.kernels import map_f64
+
+s = pd.Series([1.0, 2.0], dtype="float64", name="values")
+original_len = pd.Series.__len__
+pd.Series.__len__ = lambda self: 0
+try:
+    out = map_f64(s)
+finally:
+    pd.Series.__len__ = original_len
+
+print(json.dumps({
+    "values": out.tolist(),
+    "dtype": str(out.dtype),
+    "index": [out.index.start, out.index.stop, out.index.step, out.index.name],
+    "name": out.name,
+}, sort_keys=True))
+"""
+    native = _run_fresh(project, "native", body)
+    fallback = _run_fresh(project, "fallback", body)
+
     assert native.returncode == 0, native.stderr
     assert fallback.returncode == 0, fallback.stderr
     assert json.loads(native.stdout) == json.loads(fallback.stdout)

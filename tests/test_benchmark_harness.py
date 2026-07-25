@@ -25,6 +25,7 @@ from benchmarks.bench_product_routes import (
     _sustained_break_even,
 )
 from benchmarks.cases import KERNEL_SOURCE, make_case
+from rextio_pandas.plugin import is_compatible_plugin_api
 
 
 def _tree_clean() -> bool:
@@ -449,7 +450,7 @@ def test_preflight_gathers_provenance_on_a_clean_tree() -> None:
         "cargo",
     ):
         assert key in provenance
-    assert provenance["plugin_api_version"] == "1.3"
+    assert is_compatible_plugin_api(provenance["plugin_api_version"])
     assert provenance["required_rextio_spec"] == ">=0.1.3,<0.2"
     assert bench._rextio_version_supported(provenance["core_version"])
     assert provenance["core_dirty"] is False and provenance["plugin_dirty"] is False

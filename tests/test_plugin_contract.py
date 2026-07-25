@@ -9,14 +9,20 @@ import tomllib
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+import pytest
 import rextio
+import rextio.plugins.api as plugin_api
 
 from rextio.plugins.api import PLUGIN_API_VERSION, BoundaryConversion
 
 import rextio_pandas
 import rextio_pandas.rust_snippets as rust_snippets
 from rextio_pandas import __version__ as package_version
-from rextio_pandas.plugin import REQUIRED_PLUGIN_API, RextioPandasPlugin
+from rextio_pandas.plugin import (
+    REQUIRED_PLUGIN_API,
+    RextioPandasPlugin,
+    is_compatible_plugin_api,
+)
 from rextio_pandas.plugin_types import PLUGIN_TYPES
 from rextio_pandas.rust_snippets.map_apply import boundary_helpers
 
@@ -79,8 +85,8 @@ def test_public_alpha_version_and_dependencies() -> None:
     dependencies = project["dependencies"]
     classifiers = project.get("classifiers", [])
 
-    assert package_version == "0.1.0"
-    assert PLUGIN_API_VERSION == REQUIRED_PLUGIN_API == "1.3"
+    assert package_version == "0.1.2"
+    assert REQUIRED_PLUGIN_API == "1.3"
     assert RextioPandasPlugin.api_version == "1.3"
     assert project["requires-python"] == ">=3.11,<3.12"
     assert dependencies[0] == f"rextio{REQUIRED_REXTIO_SPEC}"
@@ -99,11 +105,68 @@ def test_public_alpha_version_and_dependencies() -> None:
     assert "incubator" not in project["description"].lower()
 
 
-def test_installed_core_is_public_api_13_range() -> None:
-    # The resolved core must advertise plugin API 1.3 and a package version in
+@pytest.mark.parametrize(
+    ("host_api", "expected"),
+    [
+        ("1.3", True),
+        ("1.4", True),
+        ("1.2", False),
+        ("2.0", False),
+        ("invalid", False),
+    ],
+)
+def test_plugin_api_compatibility_requires_same_major_and_minimum_minor(
+    host_api: str, expected: bool
+) -> None:
+    assert is_compatible_plugin_api(host_api) is expected
+
+
+@pytest.mark.parametrize("host_api", ["1.3", "1.4"])
+def test_provider_entry_methods_allow_supported_host_api(
+    monkeypatch: pytest.MonkeyPatch, host_api: str
+) -> None:
+    monkeypatch.setattr(plugin_api, "PLUGIN_API_VERSION", host_api)
+
+    assert RextioPandasPlugin().covers().symbols == ("pandas.Series.map",)
+
+
+@pytest.mark.parametrize("host_api", ["1.2", "2.0", "malformed"])
+@pytest.mark.parametrize(
+    "entry_method",
+    [
+        "to_rextio_plugin",
+        "covers",
+        "describe",
+        "type_vocabulary",
+        "claim",
+        "lower",
+        "crate_dependencies",
+    ],
+)
+def test_every_provider_entry_method_rejects_incompatible_host_api_early(
+    monkeypatch: pytest.MonkeyPatch, host_api: str, entry_method: str
+) -> None:
+    monkeypatch.setattr(plugin_api, "PLUGIN_API_VERSION", host_api)
+    provider = RextioPandasPlugin()
+    calls = {
+        "to_rextio_plugin": lambda: provider.to_rextio_plugin(),
+        "covers": lambda: provider.covers(),
+        "describe": lambda: provider.describe(object()),  # type: ignore[arg-type]
+        "type_vocabulary": lambda: provider.type_vocabulary(),
+        "claim": lambda: provider.claim(object(), object()),  # type: ignore[arg-type]
+        "lower": lambda: provider.lower(object(), object()),  # type: ignore[arg-type]
+        "crate_dependencies": lambda: provider.crate_dependencies(),
+    }
+
+    with pytest.raises(RuntimeError, match="requires a compatible Rextio plugin API"):
+        calls[entry_method]()
+
+
+def test_installed_core_is_public_compatible_api_range() -> None:
+    # The resolved core must advertise a compatible plugin API and a package version in
     # the public rextio>=0.1.3,<0.2 range. Index installs may lack direct_url;
     # editable/VCS/wheel modes are accepted when present and credential-free.
-    assert PLUGIN_API_VERSION == "1.3"
+    assert is_compatible_plugin_api(PLUGIN_API_VERSION)
     core_version = importlib_metadata.version("rextio")
     assert _rextio_version_supported(core_version), core_version
     core_file = Path(rextio.__file__).resolve()
@@ -191,7 +254,15 @@ def test_clean_env_proof_script_is_public_range_and_no_deps_free() -> None:
     assert '"--no-deps"' not in text
     assert "'--no-deps'" not in text
     assert "_require_supported_interpreter" in text
+    assert "is_compatible_plugin_api" in text
     assert "requires CPython 3.11" in text
+
+
+def test_clean_env_proof_expected_version_tracks_package_metadata() -> None:
+    proof = _load_clean_env_proof_module()
+
+    assert proof.EXPECTED_PLUGIN_VERSION == package_version
+    assert "0.1.1" not in (ROOT / "scripts" / "clean_env_proof.py").read_text(encoding="utf-8")
 
 
 def test_clean_env_proof_interpreter_gate() -> None:
@@ -220,13 +291,15 @@ def test_loader_registers_only_supported_series_types_and_exact_crate() -> None:
     registry = pandas_registry()
 
     assert registry.active[0].api_version == "1.3"
+    assert getattr(registry.active[0], "artifact_capability_declared", False) is False
     assert registry.active[0].lowering_provided is True
     assert registry.active[0].packages == ("pandas",)
     assert tuple(binding.plugin_type for binding in registry.types) == PLUGIN_TYPES
-    assert len(PLUGIN_TYPES) == 2
+    assert len(PLUGIN_TYPES) == 3
     assert [plugin_type.key for plugin_type in PLUGIN_TYPES] == [
         "rextio-pandas/series-f64",
         "rextio-pandas/series-i64",
+        "rextio-pandas/series-bool",
     ]
     assert all(
         isinstance(plugin_type.conversion, BoundaryConversion) for plugin_type in PLUGIN_TYPES
@@ -239,7 +312,11 @@ def test_loader_registers_only_supported_series_types_and_exact_crate() -> None:
     ] == [("numpy", "=0.29.0")]
 
 
-def test_public_authority_exposes_series_map_and_apply_no_go_only() -> None:
+def test_provider_does_not_declare_standalone_artifact_capability() -> None:
+    assert not hasattr(RextioPandasPlugin, "artifact_capability")
+
+
+def test_public_authority_exposes_series_map_and_conditional_apply_no_go_records() -> None:
     provider = RextioPandasPlugin()
     assert provider.covers().symbols == ("pandas.Series.map",)
 
@@ -255,6 +332,19 @@ def test_public_authority_exposes_series_map_and_apply_no_go_only() -> None:
     assert "prototype_dataframe_apply_helpers" not in rust_snippets.__all__
     assert not hasattr(rust_snippets, "prototype_dataframe_apply_helpers")
 
+    [conditional_no_go] = [record for record in records if "series-where-mask" in record.id]
+    assert conditional_no_go.outcome == "fallback"
+    assert conditional_no_go.verified is False
+    assert "alignment, casting, manager" in conditional_no_go.constraint
+    assert "empty" in conditional_no_go.constraint
+
+    [signature] = [record for record in records if record.id.endswith("series-map-signature")]
+    assert signature.guidance == (
+        "Annotate the mapper as float->float/int/bool, int->int/float/bool, or "
+        "bool->bool/int/float; numeric results from float/bool inputs must remain "
+        "literal-safe within the documented closed body grammar."
+    )
+
 
 def test_annotation_vocabulary_imports_without_pandas_or_core() -> None:
     script = """
@@ -268,7 +358,7 @@ def guarded(name, *args, **kwargs):
     return real_import(name, *args, **kwargs)
 builtins.__import__ = guarded
 
-from rextio_pandas.types import DataFrameF64, SeriesF64, SeriesI64
+from rextio_pandas.types import DataFrameF64, SeriesBool, SeriesF64, SeriesI64
 
 class Row:
     x: float
@@ -276,6 +366,7 @@ class Row:
 assert DataFrameF64[Row] is DataFrameF64
 assert SeriesF64.__module__ == "rextio_pandas.types"
 assert SeriesI64.__module__ == "rextio_pandas.types"
+assert SeriesBool.__module__ == "rextio_pandas.types"
 assert not any(name == "pandas" or name.startswith("pandas.") for name in sys.modules)
 print("ok")
 """
@@ -307,9 +398,9 @@ def test_future_and_eager_annotation_spellings() -> None:
     future: dict[str, object] = {}
     exec(
         "from __future__ import annotations\n"
-        "from rextio_pandas.types import SeriesI64\n"
-        "def f(value: SeriesI64) -> SeriesI64:\n"
+        "from rextio_pandas.types import SeriesBool\n"
+        "def f(value: SeriesBool) -> SeriesBool:\n"
         "    return value\n",
         future,
     )
-    assert future["f"].__annotations__ == {"value": "SeriesI64", "return": "SeriesI64"}  # type: ignore[union-attr]
+    assert future["f"].__annotations__ == {"value": "SeriesBool", "return": "SeriesBool"}  # type: ignore[union-attr]

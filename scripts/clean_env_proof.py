@@ -7,7 +7,7 @@ dependency resolution), and then asserts the installed provenance:
 
 * the host interpreter is CPython 3.11 (``requires-python >=3.11,<3.12``),
 * the installed ``rextio`` version satisfies ``>=0.1.3,<0.2``,
-* ``PLUGIN_API_VERSION == "1.3"``,
+* a plugin API with major 1 and minor at least 3,
 * the imported ``rextio`` and ``rextio_pandas`` module paths live inside the
   fresh environment,
 * the selected ``rextio.plugins`` entry point is provided by the installed
@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -41,6 +42,18 @@ REQUIRED_REXTIO_SPEC = ">=0.1.3,<0.2"
 REQUIRED_PLUGIN_API = "1.3"
 REQUIRED_PYTHON = (3, 11)
 REQUIRED_IMPLEMENTATION = "cpython"
+
+
+def _checkout_plugin_version() -> str:
+    """Read the checkout's single package-version authority without importing dependencies."""
+    namespace = runpy.run_path(str(ROOT / "src" / "rextio_pandas" / "__about__.py"))
+    value = namespace.get("__version__")
+    if not isinstance(value, str) or not value:
+        raise RuntimeError("rextio-pandas package version authority is missing or invalid")
+    return value
+
+
+EXPECTED_PLUGIN_VERSION = _checkout_plugin_version()
 
 
 def _fail(message: str) -> NoReturn:
@@ -63,7 +76,7 @@ def _require_supported_interpreter() -> None:
     if _interpreter_supported():
         return
     _fail(
-        "rextio-pandas 0.1.0 requires CPython 3.11 "
+        f"rextio-pandas {EXPECTED_PLUGIN_VERSION} requires CPython 3.11 "
         f"(requires-python >=3.11,<3.12); got {sys.implementation.name} "
         f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     )
@@ -160,7 +173,9 @@ import json, sys
 report = {}
 import rextio, rextio_pandas
 from rextio.plugins.api import PLUGIN_API_VERSION
+from rextio_pandas.plugin import is_compatible_plugin_api
 report["api"] = PLUGIN_API_VERSION
+report["api_compatible"] = is_compatible_plugin_api(PLUGIN_API_VERSION)
 report["rextio_file"] = rextio.__file__
 report["rextio_pandas_file"] = rextio_pandas.__file__
 report["rextio_pandas_version"] = rextio_pandas.__version__
@@ -186,22 +201,25 @@ print(json.dumps(report))
 
     env_root = str(env_dir.resolve())
 
-    if report["api"] != REQUIRED_PLUGIN_API:
-        _fail(f"PLUGIN_API_VERSION is {report['api']!r}, expected {REQUIRED_PLUGIN_API!r}")
+    if not report["api_compatible"]:
+        _fail(
+            f"PLUGIN_API_VERSION is {report['api']!r}, need major 1 and minor >= 3 "
+            f"for provider API {REQUIRED_PLUGIN_API!r}"
+        )
     if not _rextio_version_supported(report["core_version"]):
         _fail(
             f"rextio {report['core_version']!r} is outside the supported range "
             f"{REQUIRED_REXTIO_SPEC}"
         )
-    if report.get("plugin_version") != "0.1.0":
+    if report.get("plugin_version") != EXPECTED_PLUGIN_VERSION:
         _fail(
             f"installed rextio-pandas metadata version is {report.get('plugin_version')!r}, "
-            "expected 0.1.0"
+            f"expected {EXPECTED_PLUGIN_VERSION}"
         )
-    if report.get("rextio_pandas_version") != "0.1.0":
+    if report.get("rextio_pandas_version") != EXPECTED_PLUGIN_VERSION:
         _fail(
             f"imported rextio_pandas.__version__ is {report.get('rextio_pandas_version')!r}, "
-            "expected 0.1.0"
+            f"expected {EXPECTED_PLUGIN_VERSION}"
         )
     if not report["rextio_file"].startswith(env_root):
         _fail(f"imported rextio is outside the fresh env: {report['rextio_file']}")

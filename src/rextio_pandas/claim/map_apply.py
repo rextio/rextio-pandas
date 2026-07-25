@@ -19,6 +19,7 @@ from rextio_pandas.diagnostics import (
     DIAGNOSTIC_BODY,
     DIAGNOSTIC_SHAPE,
     DIAGNOSTIC_SIGNATURE,
+    SERIES_BOOL,
     SERIES_F64,
     SERIES_I64,
     SERIES_TYPES,
@@ -28,7 +29,24 @@ from rextio_pandas.diagnostics import (
 SERIES_MAP_RULE = "rextio-pandas/series-map"
 
 _COMPARISONS = frozenset({"==", "!=", "<", "<=", ">", ">="})
+_BOOL_COMPARISONS = frozenset({"==", "!="})
 _FLOAT_BINOPS = frozenset({"+", "-", "*"})
+_SCALAR_BY_SERIES = {
+    SERIES_BOOL: "bool",
+    SERIES_F64: "float",
+    SERIES_I64: "int",
+}
+_ALLOWED_RETURNS = {
+    # A bool parameter can only reach numeric output through finite literals
+    # selected by an audited conditional; it cannot be coerced or used in
+    # arithmetic by this grammar.
+    "bool": frozenset({"bool", "int", "float"}),
+    # A float parameter can only reach int output through audited i64 literals
+    # and conditionals. The grammar has no float-to-int coercion or arithmetic
+    # that produces an int.
+    "float": frozenset({"float", "int", "bool"}),
+    "int": frozenset({"int", "float", "bool"}),
+}
 
 
 @dataclass(frozen=True)
@@ -53,8 +71,8 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
 
     if expr.kind == "literal":
         literal = expr.literal
-        if literal is None or literal.kind not in {"int", "float"}:
-            return _fail("only finite int/float literals are audited")
+        if literal is None or literal.kind not in {"int", "float", "bool"}:
+            return _fail("only finite int/float and bool literals are audited")
         literal_type = literal.kind
         if expr.result_type != literal_type:
             return _fail("literal result type is inconsistent")
@@ -67,8 +85,10 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
     child_types = tuple(child.result_type for child in children)
 
     if expr.kind == "unary":
-        if input_type != "float" or expr.op != "-" or child_types != ("float",):
-            return _fail("only unary negation of float64 values is audited")
+        if expr.op == "not" and child_types == ("bool",) and expr.result_type == "bool":
+            return BodyAudit(True, "bool")
+        if expr.op != "-" or child_types != ("float",):
+            return _fail("only unary negation of float64 expressions and boolean not are audited")
         if expr.result_type != "float":
             return _fail("unary result type is inconsistent")
         return BodyAudit(True, "float")
@@ -87,6 +107,8 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
     if expr.kind == "compare":
         if not expr.ops or any(op not in _COMPARISONS for op in expr.ops):
             return _fail("identity, membership, and unaudited comparisons are rejected")
+        if input_type == "bool" and any(op not in _BOOL_COMPARISONS for op in expr.ops):
+            return _fail("boolean comparisons are limited to equality and inequality")
         if len(set(child_types)) != 1 or child_types[0] != input_type:
             return _fail("comparisons must use only the input scalar type")
         if expr.result_type != "bool":
@@ -103,8 +125,8 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
     if expr.kind == "cond":
         if len(child_types) != 3 or child_types[0] != "bool":
             return _fail("conditional expressions require a boolean test")
-        if child_types[1] != child_types[2] or child_types[1] not in {"int", "float"}:
-            return _fail("conditional branches must have one identical numeric type")
+        if child_types[1] != child_types[2] or child_types[1] not in {"int", "float", "bool"}:
+            return _fail("conditional branches must have one identical scalar type")
         if expr.result_type != child_types[1]:
             return _fail("conditional result type is inconsistent")
         return BodyAudit(True, child_types[1])
@@ -114,7 +136,9 @@ def _audit_expr(expr: CallableBodyExpr, input_type: str, param_name: str) -> Bod
 
 def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     """Validate signature and every body node without trusting a native symbol."""
-    input_type = "float" if receiver_type == SERIES_F64 else "int"
+    input_type = _SCALAR_BY_SERIES.get(receiver_type)
+    if input_type is None:
+        return _fail("the Series receiver type is outside the supported scalar matrix")
     if meta.arg_index != 0 or meta.keyword:
         return _fail("the mapper must be the sole positional callable")
     if len(meta.params) != 1:
@@ -122,7 +146,8 @@ def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     param = meta.params[0]
     if param.param_type != input_type:
         return _fail(f"the mapper parameter must be annotated {input_type}")
-    if meta.return_type not in ({"float"} if input_type == "float" else {"int", "float"}):
+    allowed_returns = _ALLOWED_RETURNS[input_type]
+    if meta.return_type not in allowed_returns:
         return _fail("the mapper return annotation is outside the supported scalar matrix")
     if meta.runtime_semantics:
         return _fail("runtime-semantics callables cannot run in the pandas native loop")
@@ -135,6 +160,21 @@ def audit_series_callable(meta: CallableMeta, receiver_type: str) -> BodyAudit:
     if audit.result_type != meta.return_type:
         return _fail("the audited body type does not match the return annotation")
     return audit
+
+
+def is_default_na_action(site: ClaimSite) -> bool:
+    """Return whether Series.map uses its default ``na_action`` semantics."""
+    if not site.keywords:
+        return True
+    if len(site.keywords) != 1:
+        return False
+    keyword = site.keywords[0]
+    return (
+        keyword.name == "na_action"
+        and keyword.arg_type == "None"
+        and keyword.literal.is_literal
+        and keyword.literal.value is None
+    )
 
 
 def _audit_row_expr(
@@ -243,12 +283,20 @@ def _claim_series_map(site: ClaimSite) -> ClaimResult:
             "the receiver must be a plain local or parameter name",
             "Bind the exact annotated Series to a plain name before calling series.map(udf).",
         )
-    if len(site.operand_types) != 1 or site.keywords or len(site.callables) != 1:
+    if (
+        site.operand_types != (None,)
+        or len(site.operand_literals) != 1
+        or site.operand_literals[0].is_literal
+        or not is_default_na_action(site)
+        or len(site.callables) != 1
+    ):
         return reject(
             site,
             DIAGNOSTIC_SHAPE,
-            "only series.map(udf) with one positional project-function reference is supported",
-            "Remove na_action, keyword callable forms, and every extra argument.",
+            "only series.map(udf) or series.map(udf, na_action=None) with one "
+            "positional project-function reference is supported",
+            "Use the default na_action (omitted or literal None), and remove keyword "
+            "callable forms and every extra argument.",
         )
     meta = site.callables[0]
     audit = audit_series_callable(meta, receiver.arg_type)
@@ -264,7 +312,19 @@ def _claim_series_map(site: ClaimSite) -> ClaimResult:
             audit.reason,
             "Use one statically resolved scalar UDF whose complete body is inside the documented audited subset.",
         )
-    result_key = SERIES_F64 if audit.result_type == "float" else SERIES_I64
+    result_type = audit.result_type
+    if result_type not in {"float", "int", "bool"}:
+        return reject(
+            site,
+            DIAGNOSTIC_BODY,
+            "the audited mapper has no supported scalar result type",
+            "Use a mapper whose complete body returns float, int, or bool in the documented subset.",
+        )
+    result_key = {
+        "float": SERIES_F64,
+        "int": SERIES_I64,
+        "bool": SERIES_BOOL,
+    }[result_type]
     return Claimed(rule_id=SERIES_MAP_RULE, result_type=result_key)
 
 
@@ -282,4 +342,5 @@ __all__ = [
     "audit_frame_callable",
     "audit_series_callable",
     "claim",
+    "is_default_na_action",
 ]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +18,9 @@ from rextio.plugins.api import (
     CallableMeta,
     CallableParam,
     Claimed,
+    ClaimLiteral,
     ClaimSite,
+    KeywordArg,
     LoweringContext,
     ReceiverMeta,
     Rejected,
@@ -25,7 +28,7 @@ from rextio.plugins.api import (
 )
 
 from rextio_pandas.claim.map_apply import SERIES_MAP_RULE
-from rextio_pandas.diagnostics import SERIES_F64, SERIES_I64
+from rextio_pandas.diagnostics import SERIES_BOOL, SERIES_F64, SERIES_I64
 from rextio_pandas.plugin import RextioPandasPlugin
 from rextio_pandas.rust_snippets.map_apply import boundary_helpers
 
@@ -39,7 +42,7 @@ def param(result_type: str) -> CallableBodyExpr:
     return CallableBodyExpr(kind="param", param_index=0, name="value", result_type=result_type)
 
 
-def literal(kind: str, value: int | float) -> CallableBodyExpr:
+def literal(kind: str, value: int | float | bool) -> CallableBodyExpr:
     return CallableBodyExpr(
         kind="literal",
         literal=ScalarLiteral(kind, value),
@@ -74,6 +77,7 @@ def site(
         column=0,
         receiver=ReceiverMeta(arg_type=receiver_type, expr_kind="name", is_safe=True),
         callables=(callable_meta,),
+        operand_literals=(ClaimLiteral(is_literal=False),),
         keywords=keywords,  # type: ignore[arg-type]
     )
 
@@ -101,6 +105,99 @@ def branchy_f64_body() -> CallableBodyExpr:
     return CallableBodyExpr(
         kind="cond",
         children=(test, positive, negative),
+        result_type="float",
+    )
+
+
+def predicate_f64_body() -> CallableBodyExpr:
+    """Return a Core-representable bool body using its complete approved grammar."""
+    value = param("float")
+    positive = CallableBodyExpr(
+        kind="compare",
+        ops=(">",),
+        children=(value, literal("float", 0.0)),
+        result_type="bool",
+    )
+    small = CallableBodyExpr(
+        kind="compare",
+        ops=("<",),
+        children=(value, literal("float", 10.0)),
+        result_type="bool",
+    )
+    combined = CallableBodyExpr(
+        kind="boolop",
+        op="and",
+        children=(positive, small),
+        result_type="bool",
+    )
+    return CallableBodyExpr(
+        kind="cond",
+        children=(
+            CallableBodyExpr(
+                kind="unary",
+                op="not",
+                children=(combined,),
+                result_type="bool",
+            ),
+            literal("bool", False),
+            literal("bool", True),
+        ),
+        result_type="bool",
+    )
+
+
+def invert_bool_body() -> CallableBodyExpr:
+    """Return the bounded SeriesBool mapper body."""
+    return CallableBodyExpr(
+        kind="unary",
+        op="not",
+        children=(param("bool"),),
+        result_type="bool",
+    )
+
+
+def f64_to_i64_body() -> CallableBodyExpr:
+    """Return an exact literal-safe float-to-int conditional."""
+    value = param("float")
+    return CallableBodyExpr(
+        kind="cond",
+        children=(
+            CallableBodyExpr(
+                kind="compare",
+                ops=(">",),
+                children=(value, literal("float", 0.0)),
+                result_type="bool",
+            ),
+            literal("int", 1),
+            literal("int", 0),
+        ),
+        result_type="int",
+    )
+
+
+def bool_to_i64_body() -> CallableBodyExpr:
+    """Return an exact literal-safe bool-to-int conditional."""
+    return CallableBodyExpr(
+        kind="cond",
+        children=(param("bool"), literal("int", 1), literal("int", 0)),
+        result_type="int",
+    )
+
+
+def bool_to_f64_body() -> CallableBodyExpr:
+    """Return a literal-safe bool-to-float conditional with signed zero."""
+    return CallableBodyExpr(
+        kind="cond",
+        children=(
+            param("bool"),
+            CallableBodyExpr(
+                kind="unary",
+                op="-",
+                children=(literal("float", 0.0),),
+                result_type="float",
+            ),
+            literal("float", 1.0),
+        ),
         result_type="float",
     )
 
@@ -133,6 +230,110 @@ def test_claims_full_domain_safe_i64_to_f64_conditional() -> None:
     )
     result = PLUGIN.claim(site(SERIES_I64, meta(body, "int", "float")), CONFIG)
     assert result == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_F64)
+
+
+@pytest.mark.parametrize(
+    ("receiver_type", "input_type"),
+    [(SERIES_F64, "float"), (SERIES_I64, "int")],
+)
+def test_claims_numeric_predicates_as_exact_bool_series(
+    receiver_type: str, input_type: str
+) -> None:
+    if input_type == "int":
+        value = param("int")
+        body = CallableBodyExpr(
+            kind="boolop",
+            op="or",
+            children=(
+                CallableBodyExpr(
+                    kind="compare",
+                    ops=(">=",),
+                    children=(value, literal("int", 0)),
+                    result_type="bool",
+                ),
+                CallableBodyExpr(
+                    kind="unary",
+                    op="not",
+                    children=(literal("bool", False),),
+                    result_type="bool",
+                ),
+            ),
+            result_type="bool",
+        )
+    else:
+        body = predicate_f64_body()
+
+    assert PLUGIN.claim(site(receiver_type, meta(body, input_type, "bool")), CONFIG) == Claimed(
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_BOOL,
+    )
+
+
+def test_claims_bounded_series_bool_to_bool_map() -> None:
+    assert PLUGIN.claim(
+        site(SERIES_BOOL, meta(invert_bool_body(), "bool", "bool")),
+        CONFIG,
+    ) == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_BOOL)
+
+    ordering = CallableBodyExpr(
+        kind="compare",
+        ops=("<",),
+        children=(param("bool"), literal("bool", True)),
+        result_type="bool",
+    )
+    wrong_return = PLUGIN.claim(
+        site(SERIES_BOOL, meta(param("bool"), "bool", "int")),
+        CONFIG,
+    )
+    assert isinstance(wrong_return, Rejected)
+    assert wrong_return.diagnostic.code == "RXTP-PANDAS-002"
+
+    rejected_ordering = PLUGIN.claim(
+        site(SERIES_BOOL, meta(ordering, "bool", "bool")),
+        CONFIG,
+    )
+    assert isinstance(rejected_ordering, Rejected)
+    assert rejected_ordering.diagnostic.code == "RXTP-PANDAS-003"
+
+
+def test_claims_literal_safe_f64_and_bool_result_dtype_matrix() -> None:
+    assert PLUGIN.claim(
+        site(SERIES_F64, meta(f64_to_i64_body(), "float", "int")), CONFIG
+    ) == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_I64)
+    assert PLUGIN.claim(
+        site(SERIES_BOOL, meta(bool_to_i64_body(), "bool", "int")), CONFIG
+    ) == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_I64)
+    assert PLUGIN.claim(
+        site(SERIES_BOOL, meta(bool_to_f64_body(), "bool", "float")), CONFIG
+    ) == Claimed(rule_id=SERIES_MAP_RULE, result_type=SERIES_F64)
+
+
+def test_rejects_unproven_numeric_result_coercions() -> None:
+    float_passthrough_as_int = PLUGIN.claim(
+        site(SERIES_F64, meta(param("float"), "float", "int")), CONFIG
+    )
+    bool_arithmetic_as_int = PLUGIN.claim(
+        site(
+            SERIES_BOOL,
+            meta(
+                CallableBodyExpr(
+                    kind="binop",
+                    op="+",
+                    children=(param("bool"), literal("bool", True)),
+                    result_type="int",
+                ),
+                "bool",
+                "int",
+            ),
+        ),
+        CONFIG,
+    )
+    for result, code in (
+        (float_passthrough_as_int, "RXTP-PANDAS-002"),
+        (bool_arithmetic_as_int, "RXTP-PANDAS-003"),
+    ):
+        assert isinstance(result, Rejected)
+        assert result.diagnostic.code == code
 
 
 @pytest.mark.parametrize(
@@ -209,6 +410,54 @@ def test_rejects_wrong_signature_and_shape() -> None:
     assert result.diagnostic.code == "RXTP-PANDAS-001"
 
 
+def test_claims_only_exact_literal_none_na_action() -> None:
+    callable_meta = meta(param("float"), "float", "float")
+    exact_none = KeywordArg(
+        name="na_action",
+        arg_type="None",
+        literal=ClaimLiteral(is_literal=True, value=None),
+    )
+
+    assert PLUGIN.claim(site(SERIES_F64, callable_meta, keywords=(exact_none,)), CONFIG) == Claimed(
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_F64,
+    )
+
+    near_misses = (
+        KeywordArg(
+            name="na_action",
+            arg_type="str",
+            literal=ClaimLiteral(is_literal=True, value="ignore"),
+        ),
+        KeywordArg(
+            name="na_action",
+            arg_type="None",
+            literal=ClaimLiteral(is_literal=False),
+        ),
+        KeywordArg(
+            name="na_action",
+            arg_type="str",
+            literal=ClaimLiteral(is_literal=True, value=None),
+        ),
+        KeywordArg(
+            name="arg",
+            arg_type="None",
+            literal=ClaimLiteral(is_literal=True, value=None),
+        ),
+    )
+    for keyword in near_misses:
+        result = PLUGIN.claim(site(SERIES_F64, callable_meta, keywords=(keyword,)), CONFIG)
+        assert isinstance(result, Rejected)
+        assert result.diagnostic.code == "RXTP-PANDAS-001"
+
+    duplicate = PLUGIN.claim(
+        site(SERIES_F64, callable_meta, keywords=(exact_none, exact_none)),
+        CONFIG,
+    )
+    assert isinstance(duplicate, Rejected)
+    assert duplicate.diagnostic.code == "RXTP-PANDAS-001"
+
+
 def test_lower_is_deterministic_and_contains_pure_detached_hot_loop() -> None:
     callable_meta = meta(branchy_f64_body(), "float", "float")
     claimed = site(SERIES_F64, callable_meta)
@@ -242,6 +491,271 @@ def test_lower_is_deterministic_and_contains_pure_detached_hot_loop() -> None:
     assert "if " in hot
 
 
+def test_lower_series_bool_map_uses_the_existing_pure_bool_loop() -> None:
+    callable_meta = meta(invert_bool_body(), "bool", "bool")
+    claimed = replace(
+        site(SERIES_BOOL, callable_meta),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_BOOL,
+    )
+    context = LoweringContext(
+        operands=("invert",),
+        receiver="flags",
+        target_language="rust",
+        fresh_name=lambda prefix: f"{prefix}_0",
+    )
+
+    lowered = PLUGIN.lower(claimed, context)
+
+    assert lowered.rust.endswith("(py, &flags)?")
+    source = "\n".join(lowered.helpers)
+    assert "input: &numpy::ndarray::Array1<bool>" in source
+    assert "numpy::ndarray::Array1<bool>" in source
+    assert "output.push((!value));" in source
+
+
+@pytest.mark.parametrize(
+    ("receiver_type", "body", "return_type", "result_key", "input_rust", "output_rust"),
+    [
+        (SERIES_F64, f64_to_i64_body(), "int", SERIES_I64, "f64", "i64"),
+        (SERIES_BOOL, bool_to_i64_body(), "int", SERIES_I64, "bool", "i64"),
+        (SERIES_BOOL, bool_to_f64_body(), "float", SERIES_F64, "bool", "f64"),
+    ],
+)
+def test_lower_preserves_the_new_literal_safe_result_dtype_matrix(
+    receiver_type: str,
+    body: CallableBodyExpr,
+    return_type: str,
+    result_key: str,
+    input_rust: str,
+    output_rust: str,
+) -> None:
+    claimed = replace(
+        site(
+            receiver_type,
+            meta(body, {SERIES_F64: "float", SERIES_BOOL: "bool"}[receiver_type], return_type),
+        ),
+        rule_id=SERIES_MAP_RULE,
+        result_type=result_key,
+    )
+    lowered = PLUGIN.lower(
+        claimed,
+        LoweringContext(
+            operands=("mapper",),
+            receiver="series",
+            target_language="rust",
+            fresh_name=lambda prefix: f"{prefix}_0",
+        ),
+    )
+    source = "\n".join(lowered.helpers)
+    assert f"input: &numpy::ndarray::Array1<{input_rust}>" in source
+    assert f"numpy::ndarray::Array1<{output_rust}>" in source
+    assert lowered.rust.endswith("(py, &series)?")
+
+
+@pytest.mark.parametrize(
+    ("receiver_type", "body", "input_type", "return_type", "result_key", "wrong_result_key"),
+    [
+        (SERIES_F64, f64_to_i64_body(), "float", "int", SERIES_I64, SERIES_F64),
+        (SERIES_BOOL, bool_to_i64_body(), "bool", "int", SERIES_I64, SERIES_BOOL),
+        (SERIES_BOOL, bool_to_f64_body(), "bool", "float", SERIES_F64, SERIES_BOOL),
+    ],
+)
+def test_lower_revalidates_every_new_result_dtype_lane_before_helper_generation(
+    receiver_type: str,
+    body: CallableBodyExpr,
+    input_type: str,
+    return_type: str,
+    result_key: str,
+    wrong_result_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callable_meta = meta(body, input_type, return_type)
+    claimed = replace(
+        site(receiver_type, callable_meta),
+        rule_id=SERIES_MAP_RULE,
+        result_type=result_key,
+    )
+    context = LoweringContext(
+        operands=("mapper",),
+        receiver="series",
+        target_language="rust",
+        fresh_name=lambda prefix: f"{prefix}_0",
+    )
+    changed_body_meta = replace(
+        claimed,
+        callables=(
+            meta(
+                replace(body, result_type=input_type),
+                input_type,
+                return_type,
+            ),
+        ),
+    )
+    changed_return_meta = replace(
+        claimed,
+        callables=(replace(callable_meta, return_type=input_type),),
+    )
+    changed_claim_result = replace(claimed, result_type=wrong_result_key)
+
+    def unreachable(*args: object, **kwargs: object) -> object:
+        raise AssertionError("forged result metadata reached Series.map helper generation")
+
+    monkeypatch.setattr("rextio_pandas.lower.map_apply.series_map_helpers", unreachable)
+    for forged in (changed_body_meta, changed_return_meta):
+        with pytest.raises(ValueError, match="refused changed callable metadata"):
+            PLUGIN.lower(forged, context)
+    with pytest.raises(ValueError, match="result type changed between claim and lower"):
+        PLUGIN.lower(changed_claim_result, context)
+
+
+def test_lower_keeps_api_13_contexts_without_a_backend_field_on_pyo3() -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    claimed = ClaimSite(
+        **{
+            **site(SERIES_F64, callable_meta).__dict__,
+            "rule_id": SERIES_MAP_RULE,
+            "result_type": SERIES_F64,
+        }
+    )
+
+    lowered = PLUGIN.lower(
+        claimed,
+        SimpleNamespace(receiver="series", operands=("udf",), target_language="rust"),
+    )
+
+    assert lowered.rust.endswith("(py, &series)?")
+
+
+@pytest.mark.parametrize("backend", ["standalone-rust", "rust-crate", "host-executable"])
+def test_lower_rejects_non_pyo3_backends(backend: str) -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    claimed = ClaimSite(
+        **{
+            **site(SERIES_F64, callable_meta).__dict__,
+            "rule_id": SERIES_MAP_RULE,
+            "result_type": SERIES_F64,
+        }
+    )
+
+    with pytest.raises(ValueError, match="PyO3 host-extension lowering"):
+        PLUGIN.lower(
+            claimed,
+            SimpleNamespace(
+                receiver="series",
+                operands=("udf",),
+                target_language="rust",
+                backend=backend,
+            ),
+        )
+
+
+def test_lower_rejects_forged_series_map_site_before_helper_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    claimed = replace(
+        site(SERIES_F64, callable_meta),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_F64,
+    )
+    context = LoweringContext(
+        operands=("udf",),
+        receiver="series",
+        target_language="rust",
+        fresh_name=lambda prefix: f"{prefix}_0",
+    )
+    forged_receiver = SimpleNamespace(
+        arg_type=SERIES_F64,
+        expr_kind="name",
+        is_safe=False,
+        schema=None,
+    )
+    forged_sites = (
+        replace(claimed, kind="binop"),
+        replace(claimed, target="map"),
+        replace(claimed, target="series.apply"),
+        replace(claimed, receiver=ReceiverMeta(SERIES_F64, "call", False)),
+        replace(claimed, receiver=forged_receiver),  # type: ignore[arg-type]
+        replace(claimed, receiver=ReceiverMeta("float", "name", True)),
+        replace(claimed, operand_types=()),
+        replace(claimed, operand_types=("float",)),
+        replace(claimed, operand_literals=()),
+        replace(claimed, operand_literals=(ClaimLiteral(is_literal=True, value=None),)),
+        replace(
+            claimed,
+            keywords=(
+                KeywordArg(
+                    name="na_action",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=True, value="ignore"),
+                ),
+            ),
+        ),
+    )
+
+    def unreachable(*args: object, **kwargs: object) -> object:
+        raise AssertionError("forged lower metadata reached Series.map helper generation")
+
+    monkeypatch.setattr("rextio_pandas.lower.map_apply.series_map_helpers", unreachable)
+    for forged in forged_sites:
+        with pytest.raises(ValueError, match="malformed Series.map lower metadata"):
+            PLUGIN.lower(forged, context)
+
+
+@pytest.mark.parametrize(
+    "context",
+    (
+        SimpleNamespace(receiver=None, operands=("udf",), target_language="rust"),
+        SimpleNamespace(receiver="series", operands=(), target_language="rust"),
+        SimpleNamespace(receiver="series", operands=("udf", "extra"), target_language="rust"),
+        SimpleNamespace(receiver="series", operands=("udf",), target_language="python"),
+    ),
+)
+def test_lower_rejects_forged_series_map_context_before_helper_generation(
+    context: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    claimed = replace(
+        site(SERIES_F64, callable_meta),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_F64,
+    )
+
+    def unreachable(*args: object, **kwargs: object) -> object:
+        raise AssertionError("forged lower context reached Series.map helper generation")
+
+    monkeypatch.setattr("rextio_pandas.lower.map_apply.series_map_helpers", unreachable)
+    with pytest.raises(ValueError, match="malformed Series.map lower metadata"):
+        PLUGIN.lower(claimed, context)  # type: ignore[arg-type]
+
+
+def test_lower_accepts_only_exact_literal_none_na_action() -> None:
+    callable_meta = meta(branchy_f64_body(), "float", "float")
+    exact_none = KeywordArg(
+        name="na_action",
+        arg_type="None",
+        literal=ClaimLiteral(is_literal=True, value=None),
+    )
+    claimed = replace(
+        site(SERIES_F64, callable_meta, keywords=(exact_none,)),
+        rule_id=SERIES_MAP_RULE,
+        result_type=SERIES_F64,
+    )
+    context = LoweringContext(
+        operands=("udf",),
+        receiver="series",
+        target_language="rust",
+        fresh_name=lambda prefix: f"{prefix}_0",
+    )
+
+    lowered = PLUGIN.lower(claimed, context)
+
+    assert lowered.rust.startswith("__rxtpd_map_series_")
+    assert lowered.rust.endswith("(py, &series)?")
+
+
 def test_series_map_materializer_reuses_extraction_time_class_validation() -> None:
     source = boundary_helpers()
     materializer = source[
@@ -254,6 +768,22 @@ def test_series_map_materializer_reuses_extraction_time_class_validation() -> No
     assert materializer.index("let Some(source) = source else") < materializer.index(
         "__rxtpd_pinned_series_class"
     )
+
+
+def test_series_boundary_derives_length_from_guarded_exact_numpy_array() -> None:
+    source = boundary_helpers()
+    boundary = source[
+        source.index("fn __rxtpd_series_parts") : source.index("fn __rxtpd_extract_series_f64")
+    ]
+
+    assert "value.len()" not in boundary
+    assert boundary.index("__rxtpd_is_exact_numpy_dtype") < boundary.index(
+        'let to_numpy = series_class.getattr("to_numpy")?'
+    )
+    assert boundary.index(".cast_into::<numpy::PyArray1<T>>()") < boundary.index(
+        "let length = typed.readonly().as_array().len()"
+    )
+    assert boundary.index("if length == 0") < boundary.index("if stop != length as isize")
 
 
 def _write_module(root: Path, source: str) -> None:
@@ -378,7 +908,101 @@ def run(series: SeriesF64) -> SeriesF64:
     assert source.count("fn __rxtpd_map_values_") == 1
 
 
-def test_analyzer_rejects_keyword_mapper_and_na_action_with_plugin_code(tmp_path: Path) -> None:
+def test_analyzer_composes_two_and_four_stage_maps_without_intermediate_materialization(
+    tmp_path: Path,
+) -> None:
+    _write_module(
+        tmp_path,
+        """
+from rextio_pandas.types import SeriesBool, SeriesF64
+
+def scale(value: float) -> float:
+    return value * 2.0
+
+def shift(value: float) -> float:
+    return value + 1.0
+
+def predicate(value: float) -> bool:
+    return (value > 0.0 and not value == 7.0) or False
+
+def invert(value: bool) -> bool:
+    return not value
+
+def two_stage(series: SeriesF64) -> SeriesBool:
+    scaled = series.map(scale)
+    return scaled.map(predicate)
+
+def four_stage(series: SeriesF64) -> SeriesBool:
+    first = series.map(scale)
+    second = first.map(shift)
+    third = second.map(scale)
+    return third.map(predicate)
+
+def bool_stage(series: SeriesBool) -> SeriesBool:
+    return series.map(invert)
+
+def predicate_then_invert(series: SeriesF64) -> SeriesBool:
+    flags = series.map(predicate)
+    return flags.map(invert)
+""",
+    )
+    registry = pandas_registry()
+    analysis = analyze_project(
+        tmp_path,
+        active_plugins=registry.active,
+        plugin_registry=registry,
+        plugin_config=CONFIG,
+    )
+
+    for name, stages in (("app.kernels.two_stage", 2), ("app.kernels.four_stage", 4)):
+        function = _function(analysis, name)
+        assert function.route == "native-plugin:rextio-pandas"
+        assert function.accepted is True
+        assert len(function.plugin_claims) == stages
+        assert function.plugin_claims[-1].result_type == SERIES_BOOL
+
+    bool_stage = _function(analysis, "app.kernels.bool_stage")
+    assert bool_stage.route == "native-plugin:rextio-pandas"
+    assert bool_stage.accepted is True
+    assert len(bool_stage.plugin_claims) == 1
+    assert bool_stage.plugin_claims[0].receiver.arg_type == SERIES_BOOL
+    assert bool_stage.plugin_claims[0].result_type == SERIES_BOOL
+
+    predicate_then_invert = _function(analysis, "app.kernels.predicate_then_invert")
+    assert predicate_then_invert.route == "native-plugin:rextio-pandas"
+    assert predicate_then_invert.accepted is True
+    assert len(predicate_then_invert.plugin_claims) == 2
+    assert predicate_then_invert.plugin_claims[1].receiver.arg_type == SERIES_BOOL
+    assert predicate_then_invert.plugin_claims[1].result_type == SERIES_BOOL
+
+    source = _generated_source(analysis, registry)
+    for name, stages in (("app__kernels__two_stage", 2), ("app__kernels__four_stage", 4)):
+        function_source = source[source.index(f"fn {name}") :]
+        next_function = function_source.find("\n#[pyfunction]", 1)
+        if next_function != -1:
+            function_source = function_source[:next_function]
+        assert function_source.count("__rxtpd_extract_series_f64(py, &series)?") == 1
+        assert function_source.count("__rxtpd_map_series_") == stages
+        assert function_source.count("__rxtpd_materialize_series(py,") == 1
+
+    bool_source = source[source.index("fn app__kernels__bool_stage") :]
+    bool_next = bool_source.find("\n#[pyfunction]", 1)
+    if bool_next != -1:
+        bool_source = bool_source[:bool_next]
+    assert bool_source.count("__rxtpd_extract_series_bool(py, &series)?") == 1
+    assert bool_source.count("__rxtpd_map_series_") == 1
+    assert bool_source.count("__rxtpd_materialize_series(py,") == 1
+
+    chained_source = source[source.index("fn app__kernels__predicate_then_invert") :]
+    chained_next = chained_source.find("\n#[pyfunction]", 1)
+    if chained_next != -1:
+        chained_source = chained_source[:chained_next]
+    assert chained_source.count("__rxtpd_extract_series_f64(py, &series)?") == 1
+    assert chained_source.count("__rxtpd_map_series_") == 2
+    assert chained_source.count("__rxtpd_materialize_series(py,") == 1
+
+
+def test_analyzer_accepts_only_literal_none_na_action_with_plugin_code(tmp_path: Path) -> None:
     _write_module(
         tmp_path,
         """
@@ -390,8 +1014,15 @@ def identity(value: float) -> float:
 def keyword(series: SeriesF64) -> SeriesF64:
     return series.map(arg=identity)
 
-def na_action(series: SeriesF64) -> SeriesF64:
+def explicit_none(series: SeriesF64) -> SeriesF64:
+    return series.map(identity, na_action=None)
+
+def ignore(series: SeriesF64) -> SeriesF64:
     return series.map(identity, na_action="ignore")
+
+def dynamic(series: SeriesF64) -> SeriesF64:
+    action = None
+    return series.map(identity, na_action=action)
 """,
     )
     registry = pandas_registry()
@@ -402,7 +1033,21 @@ def na_action(series: SeriesF64) -> SeriesF64:
         plugin_config=CONFIG,
     )
 
-    for qualname in ("app.kernels.keyword", "app.kernels.na_action"):
+    explicit_none = _function(analysis, "app.kernels.explicit_none")
+    assert explicit_none.route == "native-plugin:rextio-pandas"
+    assert explicit_none.accepted is True
+    assert len(explicit_none.plugin_claims) == 1
+    keyword = explicit_none.plugin_claims[0].keywords[0]
+    assert keyword.name == "na_action"
+    assert keyword.arg_type == "None"
+    assert keyword.literal.is_literal is True
+    assert keyword.literal.value is None
+
+    for qualname in ("app.kernels.keyword", "app.kernels.ignore"):
         function = _function(analysis, qualname)
         assert function.route == "fallback-python"
         assert any(d.code == "RXTP-PANDAS-001" for d in function.diagnostics)
+
+    dynamic = _function(analysis, "app.kernels.dynamic")
+    assert dynamic.route == "fallback-python"
+    assert dynamic.plugin_claims == []

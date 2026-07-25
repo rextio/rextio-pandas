@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 (2026-07-26)
+
+Public Alpha release on PyPI. This release expands only the audited
+`Series.map` result and conditional matrix; `Series.where`, `Series.mask`, and
+`DataFrame.apply(axis=1)` remain ordinary Python fallback.
 
 - Add forged-lower regressions for every new result-dtype lane and a blocking
   Core `0.1.6` source-integration job that runs both focused plugin tests and

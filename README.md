@@ -4,7 +4,8 @@
 pandas `Series.map` slice to native Rust. It requires **CPython 3.11 only**
 (`requires-python = ">=3.11,<3.12"`) and declares Rextio provider API 1.3 via
 the public package range `rextio>=0.1.3,<0.2`. It is compatible with Core API
-1.3 and later 1.x minors (including Core 0.1.5 / API 1.4). Development and evidence are pinned to
+1.3 and later 1.x minors (including Core 0.1.6 / API 1.6). Version **0.1.2**
+was released on **2026-07-26**. Development and evidence are pinned to
 `pandas==2.3.3` and `numpy==2.3.5`. Other CPython minors (including 3.12 and
 3.13) are intentionally unsupported for this release.
 

@@ -7,8 +7,9 @@ Public Alpha release on PyPI. This release expands only the audited
 `DataFrame.apply(axis=1)` remain ordinary Python fallback.
 
 - Add forged-lower regressions for every new result-dtype lane and a blocking
-  Core `0.1.6` source-integration job that runs both focused plugin tests and
-  the real-Cargo `Series.map` proof without replacing the released-Core matrix.
+  public **`rextio==0.1.6`** release lane that runs both focused plugin tests
+  and the real-Cargo `Series.map` proof without replacing the older released-
+  Core compatibility matrix.
 - Audit unary negation of an already-audited float expression independently of
   the receiver dtype, matching Core's real AST metadata for a `-0.0` literal in
   the bounded `SeriesBool -> SeriesF64` conditional route.

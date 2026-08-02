@@ -1,7 +1,7 @@
 # rextio-pandas
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rextio/rextio-pandas/main/assets/readme/rextio-icon.png" width="96" alt="Rextio icon">
+  <img src="./assets/readme/rextio-icon.png" width="96" alt="Rextio icon">
 </p>
 
 <p align="center"><strong>Native Rust lowering for a deliberately narrow, audited `pandas.Series.map` surface.</strong></p>
